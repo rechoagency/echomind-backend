@@ -34,17 +34,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Railway provides PORT environment variable
-# We'll use it with a default fallback
-ENV PORT=8000
+# Expose port 8080 (Railway's default)
+EXPOSE 8080
 
-# Expose the port
-EXPOSE $PORT
-
-# Health check (optional but good practice)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:$PORT/health')" || exit 1
-
-# Run the application using uvicorn
-# Railway will inject the PORT variable
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Run the application using uvicorn on port 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
