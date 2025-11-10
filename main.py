@@ -6,8 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-# Import your metrics router
+# Import your routers
 from metrics_api_router import router as metrics_router
+from client_onboarding_router import router as onboarding_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,8 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include metrics router
+# Include routers
 app.include_router(metrics_router, prefix="/api")
+app.include_router(onboarding_router, prefix="/api")
 
 # Health check endpoint
 @app.get("/")
