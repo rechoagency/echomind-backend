@@ -30,7 +30,7 @@ app.add_middleware(
 )
 
 # Include metrics router
-app.include_router(metrics_router)
+app.include_router(metrics_router, prefix="/api")
 
 # Health check endpoint
 @app.get("/")
