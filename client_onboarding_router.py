@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/client-onboarding", tags=["Client Onboarding"])
 
 # Get environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Initialize Supabase client
