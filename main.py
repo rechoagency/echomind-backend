@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 """
 EchoMind Backend - Main Application
 Reddit Marketing Intelligence Platform
