@@ -12,12 +12,6 @@ import logging
 import os
 import json
 
-# Import document service
-from services.document_ingestion_service import DocumentIngestionService, create_document_service
-
-# Supabase client
-from supabase import create_client, Client
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,16 +24,23 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize clients lazily (only when needed)
+supabase = None
+document_service = None
 
-# Initialize document service
-try:
-    document_service = create_document_service(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY)
-    logger.info("Document ingestion service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize document service: {str(e)}")
-    document_service = None
+def get_supabase():
+    global supabase
+    if supabase is None:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return supabase
+
+def get_document_service():
+    global document_service
+    if document_service is None:
+        from services.document_ingestion_service import create_document_service
+        document_service = create_document_service(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY)
+    return document_service
 
 
 # Pydantic models
@@ -67,6 +68,8 @@ async def register_client(request: ClientOnboardingRequest):
     """
     try:
         logger.info(f"Registering new client: {request.company_name}")
+        
+        supabase = get_supabase()
         
         # Create client record
         client_data = {
@@ -140,13 +143,10 @@ async def upload_documents(
     Upload and process documents for a client
     Supports: PDF, Word, Excel, CSV, JSON, TXT
     """
-    if not document_service:
-        raise HTTPException(
-            status_code=503,
-            detail="Document ingestion service not available. Check OpenAI API key configuration."
-        )
-    
     try:
+        document_service = get_document_service()
+        supabase = get_supabase()
+        
         logger.info(f"Processing {len(files)} documents for client {client_id}")
         
         # Verify client exists
@@ -199,6 +199,8 @@ async def get_client_documents(client_id: str):
     Get all documents for a client
     """
     try:
+        supabase = get_supabase()
+        
         # Get document uploads
         documents = supabase.table("document_uploads")\
             .select("*")\
@@ -224,6 +226,8 @@ async def get_client_configuration(client_id: str):
     Get client configuration including subreddits and keywords
     """
     try:
+        supabase = get_supabase()
+        
         # Get client info
         client = supabase.table("clients").select("*").eq("id", client_id).execute()
         if not client.data:
@@ -273,6 +277,8 @@ async def update_client_configuration(
     Update client configuration
     """
     try:
+        supabase = get_supabase()
+        
         update_data = {}
         
         if brand_voice is not None:
