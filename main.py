@@ -90,7 +90,21 @@ async def system_status():
             env_check["OPENAI_API_KEY"]
         ])
     }
-
+@app.get("/api/system/env-check")
+async def env_check():
+    """Check what environment variables are actually loaded"""
+    import os
+    all_env = dict(os.environ)
+    
+    # Filter to show only our keys
+    relevant = {k: v[:20] + "..." if len(v) > 20 else v 
+                for k, v in all_env.items() 
+                if any(keyword in k for keyword in ['SUPABASE', 'OPENAI', 'REDDIT', 'GOOGLE'])}
+    
+    return {
+        "found_variables": relevant,
+        "total_env_vars": len(all_env)
+    }
 
 @app.on_event("startup")
 async def startup_event():
