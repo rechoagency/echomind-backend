@@ -9,10 +9,6 @@ from datetime import datetime
 # Load environment variables from .env file
 load_dotenv()
 
-# Import routers
-from routers.client_onboarding_router import router as onboarding_router
-from routers.metrics_router import router as metrics_router
-
 # Lazy-loaded Supabase client
 _supabase_client = None
 
@@ -33,11 +29,10 @@ def get_supabase() -> Client:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events"""
-    # Startup
     print("🚀 EchoMind Backend Starting...")
-    print(f"✅ Environment loaded: {os.getenv('SUPABASE_URL')[:20]}...")
+    if os.getenv('SUPABASE_URL'):
+        print(f"✅ Environment loaded: {os.getenv('SUPABASE_URL')[:20]}...")
     
-    # Initialize Supabase connection
     try:
         supabase = get_supabase()
         print("✅ Supabase connection established")
@@ -46,7 +41,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown
     print("👋 EchoMind Backend Shutting Down...")
 
 # Initialize FastAPI app
@@ -60,17 +54,13 @@ app = FastAPI(
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Client Onboarding"])
-app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics & Analytics"])
-
-# Health check endpoint
+# Health check endpoints
 @app.get("/")
 async def root():
     """Root endpoint - health check"""
@@ -86,8 +76,6 @@ async def health_check():
     """Detailed health check with system status"""
     try:
         supabase = get_supabase()
-        
-        # Test database connection
         response = supabase.table("clients").select("client_id").limit(1).execute()
         db_status = "connected"
     except Exception as e:
@@ -108,12 +96,9 @@ async def health_check():
 async def system_status(supabase: Client = Depends(get_supabase)):
     """Get comprehensive system status including table counts"""
     try:
-        # Get counts from key tables
         clients_response = supabase.table("clients").select("client_id", count="exact").execute()
         opportunities_response = supabase.table("opportunities").select("opportunity_id", count="exact").execute()
         content_response = supabase.table("generated_content").select("content_id", count="exact").execute()
-        
-        # Get document-related counts
         uploads_response = supabase.table("document_uploads").select("upload_id", count="exact").execute()
         chunks_response = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
         
@@ -138,7 +123,6 @@ async def system_status(supabase: Client = Depends(get_supabase)):
         raise HTTPException(status_code=500, detail=f"System status check failed: {str(e)}")
 
 # Worker Management Endpoints
-
 @app.post("/api/workers/score-opportunities")
 async def trigger_opportunity_scoring(supabase: Client = Depends(get_supabase)):
     """Trigger opportunity scoring worker"""
@@ -233,7 +217,6 @@ async def trigger_all_workers(supabase: Client = Depends(get_supabase)):
 async def worker_status(supabase: Client = Depends(get_supabase)):
     """Get current worker processing status"""
     try:
-        # Get opportunities with scoring status
         opportunities_query = supabase.table("opportunities").select(
             "opportunity_id, subreddit_score, thread_score, user_score, combined_score, product_matches"
         ).execute()
@@ -241,21 +224,15 @@ async def worker_status(supabase: Client = Depends(get_supabase)):
         opportunities = opportunities_query.data
         total_opportunities = len(opportunities)
         
-        # Count scored opportunities (those with combined_score)
         scored_opportunities = sum(1 for opp in opportunities if opp.get('combined_score') is not None)
-        
-        # Count opportunities with product matches
         matched_opportunities = sum(1 for opp in opportunities if opp.get('product_matches') is not None)
         
-        # Get generated content count
         content_query = supabase.table("generated_content").select("content_id", count="exact").execute()
         generated_content = content_query.count
         
-        # Get voice profiles count
         voice_query = supabase.table("voice_profiles").select("profile_id", count="exact").execute()
         voice_profiles = voice_query.count
         
-        # Get document chunks count
         chunks_query = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
         document_chunks = chunks_query.count
         
@@ -281,26 +258,21 @@ async def worker_status(supabase: Client = Depends(get_supabase)):
                 "opportunity_scoring": "ready",
                 "product_matchback": "ready" if document_chunks > 0 else "waiting_for_documents",
                 "content_generation": "ready",
-                "voice_application": "ready" if voice_profiles > 0 else "ready"
+                "voice_application": "ready"
             }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Worker status check failed: {str(e)}")
 
-# Document Management Endpoint
 @app.get("/api/documents/status")
 async def document_status(supabase: Client = Depends(get_supabase)):
     """Get document processing status"""
     try:
-        # Get document uploads
         uploads_response = supabase.table("document_uploads").select(
             "upload_id, client_id, file_name, file_type, processing_status, created_at"
         ).execute()
         
-        # Get chunks count
         chunks_response = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
-        
-        # Get embeddings count
         embeddings_response = supabase.table("vector_embeddings").select("embedding_id", count="exact").execute()
         
         return {
