@@ -36,3 +36,16 @@ psycopg2-binary==2.9.9
 # Utilities
 python-dateutil==2.8.2
 pytz==2023.3
+
+# FILE PROCESSING (CRITICAL - WAS MISSING)
+PyPDF2==3.0.1
+python-docx==1.1.0
+openpyxl==3.1.2
+xlrd==2.0.1
+
+# GOOGLE APIs (FOR ANALYTICS + SEARCH CONSOLE - WAS MISSING)
+google-analytics-data==0.18.0
+google-api-python-client==2.108.0
+google-auth==2.25.2
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
