@@ -265,7 +265,7 @@ class OpportunityScoringWorker:
             logger.info("Starting opportunity scoring process...")
             
             # Get opportunities without scores
-            query = self.supabase.table("discovered_opportunities")\
+            query = self.supabase.table("opportunities")\
                 .select("*")\
                 .is_("opportunity_score", "null")
             
@@ -293,7 +293,7 @@ class OpportunityScoringWorker:
                     scores = self.score_opportunity(opp)
                     
                     # Update database
-                    self.supabase.table("discovered_opportunities").update({
+                    self.supabase.table("opportunities").update({
                         "opportunity_score": scores["opportunity_score"],
                         "priority": scores["priority"],
                         "buying_intent_score": scores["buying_intent_score"],
@@ -341,7 +341,7 @@ class OpportunityScoringWorker:
         """
         try:
             # Get opportunity
-            opp = self.supabase.table("discovered_opportunities")\
+            opp = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("id", opportunity_id)\
                 .execute()
@@ -356,7 +356,7 @@ class OpportunityScoringWorker:
             scores = self.score_opportunity(opp.data[0])
             
             # Update database
-            self.supabase.table("discovered_opportunities").update({
+            self.supabase.table("opportunities").update({
                 "opportunity_score": scores["opportunity_score"],
                 "priority": scores["priority"],
                 "buying_intent_score": scores["buying_intent_score"],
