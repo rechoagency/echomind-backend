@@ -321,7 +321,7 @@ Write the response now:"""
             logger.info("Starting content generation process...")
             
             # Build query
-            query = self.supabase.table("discovered_opportunities").select("*")
+            query = self.supabase.table("opportunities").select("*")
             
             if client_id:
                 query = query.eq("client_id", client_id)
@@ -415,7 +415,7 @@ Write the response now:"""
             Processing result
         """
         try:
-            opp = self.supabase.table("discovered_opportunities")\
+            opp = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("id", opportunity_id)\
                 .execute()
