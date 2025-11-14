@@ -215,7 +215,7 @@ class ProductMatchbackWorker:
             }
             
             # Update opportunity with product matches
-            self.supabase.table("discovered_opportunities").update({
+            self.supabase.table("opportunities").update({
                 "product_matches": json.dumps(product_matches),
                 "matchback_completed_at": datetime.utcnow().isoformat()
             }).eq("id", opportunity_id).execute()
@@ -252,7 +252,7 @@ class ProductMatchbackWorker:
             logger.info("Starting product matchback process...")
             
             # Get opportunities without product matches (or all if force_rematch)
-            query = self.supabase.table("discovered_opportunities").select("*")
+            query = self.supabase.table("opportunities").select("*")
             
             if not force_rematch:
                 query = query.is_("product_matches", "null")
@@ -327,7 +327,7 @@ class ProductMatchbackWorker:
         """
         try:
             # Get opportunity
-            opp = self.supabase.table("discovered_opportunities")\
+            opp = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("id", opportunity_id)\
                 .execute()
