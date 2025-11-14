@@ -83,7 +83,7 @@ async def register_client(request: ClientOnboardingRequest):
         }
         
         client_result = supabase.table("clients").insert(client_data).execute()
-        client_id = client_result.data[0]["id"]
+        client_id = client_result.data[0]["client_id"]  # ← FIXED: Use client_id not id
         
         logger.info(f"Client created with ID: {client_id}")
         
@@ -149,8 +149,8 @@ async def upload_documents(
         
         logger.info(f"Processing {len(files)} documents for client {client_id}")
         
-        # Verify client exists
-        client_check = supabase.table("clients").select("id").eq("id", client_id).execute()
+        # Verify client exists - FIXED: Use client_id not id
+        client_check = supabase.table("clients").select("client_id").eq("client_id", client_id).execute()
         if not client_check.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
         
@@ -228,8 +228,8 @@ async def get_client_configuration(client_id: str):
     try:
         supabase = get_supabase()
         
-        # Get client info
-        client = supabase.table("clients").select("*").eq("id", client_id).execute()
+        # Get client info - FIXED: Use client_id not id
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
         if not client.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
         
@@ -247,7 +247,7 @@ async def get_client_configuration(client_id: str):
         
         # Get document count
         documents = supabase.table("document_uploads")\
-            .select("id", count="exact")\
+            .select("upload_id", count="exact")\
             .eq("client_id", client_id)\
             .execute()
         
@@ -293,7 +293,8 @@ async def update_client_configuration(
         
         update_data["updated_at"] = datetime.utcnow().isoformat()
         
-        result = supabase.table("clients").update(update_data).eq("id", client_id).execute()
+        # FIXED: Use client_id not id
+        result = supabase.table("clients").update(update_data).eq("client_id", client_id).execute()
         
         if not result.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
