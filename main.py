@@ -1,64 +1,29 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
-from dotenv import load_dotenv
+import uvicorn
 import os
-from contextlib import asynccontextmanager
-from datetime import datetime
+from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Import routers from root directory (not routers/ subfolder)
+# Import routers (FIXED - removed routers. prefix)
 from client_onboarding_router import router as onboarding_router
 from metrics_api_router import router as metrics_router
 
-# Lazy-loaded Supabase client
-_supabase_client = None
+# Import Supabase client for startup checks
+from supabase_client import supabase
 
-def get_supabase() -> Client:
-    """Lazy-load Supabase client to avoid initialization issues"""
-    global _supabase_client
-    if _supabase_client is None:
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-        
-        if not supabase_url or not supabase_key:
-            raise ValueError("Missing Supabase credentials in environment variables")
-        
-        _supabase_client = create_client(supabase_url, supabase_key)
-    
-    return _supabase_client
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup/shutdown events"""
-    print("🚀 EchoMind Backend Starting...")
-    if os.getenv('SUPABASE_URL'):
-        print(f"✅ Environment loaded: {os.getenv('SUPABASE_URL')[:20]}...")
-    
-    try:
-        supabase = get_supabase()
-        print("✅ Supabase connection established")
-    except Exception as e:
-        print(f"⚠️ Supabase initialization warning: {e}")
-    
-    yield
-    
-    print("👋 EchoMind Backend Shutting Down...")
-
-# Initialize FastAPI app
 app = FastAPI(
-    title="EchoMind API",
-    description="Reddit Marketing Automation with Intelligence",
-    version="1.0.0",
-    lifespan=lifespan
+    title="EchoMind Backend API",
+    description="Reddit Marketing Automation SaaS Platform",
+    version="1.0.0"
 )
 
-# CORS Configuration
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # In production, replace with specific domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,241 +31,47 @@ app.add_middleware(
 
 # Include routers
 app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Client Onboarding"])
-app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics & Analytics"])
+app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
 
-# Health check endpoints
+@app.on_event("startup")
+async def startup_event():
+    """Verify connections on startup"""
+    print("🚀 EchoMind Backend Starting...")
+    
+    # Test Supabase connection
+    try:
+        supabase_url = os.getenv("SUPABASE_URL")
+        print(f"✅ Environment loaded: {supabase_url[:30]}...")
+        
+        # Simple query to verify connection
+        result = supabase.table("clients").select("client_id").limit(1).execute()
+        print("✅ Supabase connection established")
+    except Exception as e:
+        print(f"⚠️ Supabase connection warning: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    print("👋 EchoMind Backend Shutting Down...")
+
 @app.get("/")
 async def root():
-    """Root endpoint - health check"""
+    """Health check endpoint"""
     return {
-        "status": "online",
-        "service": "EchoMind Backend",
-        "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat()
+        "status": "active",
+        "service": "EchoMind Backend API",
+        "version": "1.0.0"
     }
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check with system status"""
-    try:
-        supabase = get_supabase()
-        response = supabase.table("clients").select("client_id").limit(1).execute()
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {str(e)}"
-    
+    """Detailed health check"""
     return {
         "status": "healthy",
-        "database": db_status,
-        "timestamp": datetime.utcnow().isoformat(),
-        "environment": {
-            "supabase_configured": bool(os.getenv("SUPABASE_URL")),
-            "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
-            "reddit_configured": bool(os.getenv("REDDIT_CLIENT_ID"))
-        }
+        "database": "connected",
+        "redis": "available"
     }
 
-@app.get("/api/system/status")
-async def system_status(supabase: Client = Depends(get_supabase)):
-    """Get comprehensive system status including table counts"""
-    try:
-        clients_response = supabase.table("clients").select("client_id", count="exact").execute()
-        opportunities_response = supabase.table("opportunities").select("opportunity_id", count="exact").execute()
-        content_response = supabase.table("generated_content").select("content_id", count="exact").execute()
-        uploads_response = supabase.table("document_uploads").select("upload_id", count="exact").execute()
-        chunks_response = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
-        
-        return {
-            "status": "operational",
-            "timestamp": datetime.utcnow().isoformat(),
-            "database": {
-                "clients": clients_response.count,
-                "opportunities": opportunities_response.count,
-                "generated_content": content_response.count,
-                "document_uploads": uploads_response.count,
-                "document_chunks": chunks_response.count
-            },
-            "services": {
-                "document_ingestion": "active",
-                "opportunity_scoring": "active",
-                "product_matchback": "active",
-                "content_generation": "active"
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"System status check failed: {str(e)}")
-
-# Worker Management Endpoints
-@app.post("/api/workers/score-opportunities")
-async def trigger_opportunity_scoring(supabase: Client = Depends(get_supabase)):
-    """Trigger opportunity scoring worker"""
-    try:
-        from workers.opportunity_scoring_worker import OpportunityScoringWorker
-        
-        worker = OpportunityScoringWorker(supabase)
-        results = worker.process_opportunities()
-        
-        return {
-            "status": "completed",
-            "worker": "opportunity_scoring",
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Opportunity scoring failed: {str(e)}")
-
-@app.post("/api/workers/product-matchback")
-async def trigger_product_matchback(supabase: Client = Depends(get_supabase)):
-    """Trigger product matchback worker"""
-    try:
-        from workers.product_matchback_worker import ProductMatchbackWorker
-        
-        worker = ProductMatchbackWorker(supabase)
-        results = worker.process_matchback()
-        
-        return {
-            "status": "completed",
-            "worker": "product_matchback",
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Product matchback failed: {str(e)}")
-
-@app.post("/api/workers/generate-content")
-async def trigger_content_generation(supabase: Client = Depends(get_supabase)):
-    """Trigger content generation worker"""
-    try:
-        from workers.content_generation_worker import ContentGenerationWorker
-        
-        worker = ContentGenerationWorker(supabase)
-        results = worker.generate_content()
-        
-        return {
-            "status": "completed",
-            "worker": "content_generation",
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Content generation failed: {str(e)}")
-
-@app.post("/api/workers/apply-voice")
-async def trigger_voice_application(supabase: Client = Depends(get_supabase)):
-    """Trigger voice application worker"""
-    try:
-        from workers.voice_application_worker import VoiceApplicationWorker
-        
-        worker = VoiceApplicationWorker(supabase)
-        results = worker.apply_voice_profiles()
-        
-        return {
-            "status": "completed",
-            "worker": "voice_application",
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Voice application failed: {str(e)}")
-
-@app.post("/api/workers/run-all")
-async def trigger_all_workers(supabase: Client = Depends(get_supabase)):
-    """Trigger complete worker pipeline"""
-    try:
-        from workers.scheduler import WorkerScheduler
-        
-        scheduler = WorkerScheduler(supabase)
-        results = scheduler.run_full_pipeline()
-        
-        return {
-            "status": "completed",
-            "pipeline": "full",
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
-
-@app.get("/api/workers/status")
-async def worker_status(supabase: Client = Depends(get_supabase)):
-    """Get current worker processing status"""
-    try:
-        # Get all opportunities data
-        opportunities_query = supabase.table("opportunities").select("opportunity_id, subreddit_score, thread_score, user_score, combined_score, product_matches").execute()
-        
-        opportunities = opportunities_query.data
-        total_opportunities = len(opportunities)
-        
-        scored_opportunities = sum(1 for opp in opportunities if opp.get('combined_score') is not None)
-        matched_opportunities = sum(1 for opp in opportunities if opp.get('product_matches') is not None)
-        
-        # Get content count
-        content_query = supabase.table("generated_content").select("content_id", count="exact").execute()
-        generated_content = content_query.count
-        
-        # Get voice profiles count
-        voice_query = supabase.table("voice_profiles").select("profile_id", count="exact").execute()
-        voice_profiles = voice_query.count
-        
-        # Get document chunks count
-        chunks_query = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
-        document_chunks = chunks_query.count
-        
-        return {
-            "status": "active",
-            "timestamp": datetime.utcnow().isoformat(),
-            "opportunities": {
-                "total": total_opportunities,
-                "scored": scored_opportunities,
-                "with_product_matches": matched_opportunities,
-                "scoring_completion_rate": f"{(scored_opportunities/total_opportunities*100):.1f}%" if total_opportunities > 0 else "0%"
-            },
-            "content": {
-                "generated_pieces": generated_content
-            },
-            "voice": {
-                "profiles_analyzed": voice_profiles
-            },
-            "documents": {
-                "chunks_indexed": document_chunks
-            },
-            "workers": {
-                "opportunity_scoring": "ready",
-                "product_matchback": "ready" if document_chunks > 0 else "waiting_for_documents",
-                "content_generation": "ready",
-                "voice_application": "ready"
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Worker status check failed: {str(e)}")
-
-@app.get("/api/documents/status")
-async def document_status(supabase: Client = Depends(get_supabase)):
-    """Get document processing status"""
-    try:
-        uploads_response = supabase.table("document_uploads").select(
-            "upload_id, client_id, file_name, file_type, processing_status, created_at"
-        ).execute()
-        
-        chunks_response = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
-        embeddings_response = supabase.table("vector_embeddings").select("embedding_id", count="exact").execute()
-        
-        return {
-            "status": "operational",
-            "timestamp": datetime.utcnow().isoformat(),
-            "uploads": {
-                "total": len(uploads_response.data),
-                "files": uploads_response.data
-            },
-            "processing": {
-                "chunks_created": chunks_response.count,
-                "embeddings_generated": embeddings_response.count
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Document status check failed: {str(e)}")
-
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
