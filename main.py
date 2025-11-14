@@ -326,9 +326,9 @@ async def worker_status():
         supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
         
         # Count opportunities by status
-        total_opps = supabase.table("discovered_opportunities").select("id", count="exact").execute()
-        scored_opps = supabase.table("discovered_opportunities").select("id", count="exact").not_.is_("opportunity_score", "null").execute()
-        matched_opps = supabase.table("discovered_opportunities").select("id", count="exact").not_.is_("product_matches", "null").execute()
+        total_opps = supabase.table("opportunities").select("id", count="exact").execute()
+        scored_opps = supabase.table("opportunities").select("id", count="exact").not_.is_("opportunity_score", "null").execute()
+        matched_opps = supabase.table("opportunities").select("id", count="exact").not_.is_("product_matches", "null").execute()
         
         # Count generated content
         total_content = supabase.table("generated_content").select("id", count="exact").execute()
