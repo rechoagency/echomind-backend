@@ -225,9 +225,8 @@ async def trigger_all_workers(supabase: Client = Depends(get_supabase)):
 async def worker_status(supabase: Client = Depends(get_supabase)):
     """Get current worker processing status"""
     try:
-        opportunities_query = supabase.table("opportunities").select(
-            "opportunity_id, subreddit_score, thread_score, user_score, combined_score, product_matches"
-        ).execute()
+        # Get all opportunities data
+        opportunities_query = supabase.table("opportunities").select("opportunity_id, subreddit_score, thread_score, user_score, combined_score, product_matches").execute()
         
         opportunities = opportunities_query.data
         total_opportunities = len(opportunities)
@@ -235,12 +234,15 @@ async def worker_status(supabase: Client = Depends(get_supabase)):
         scored_opportunities = sum(1 for opp in opportunities if opp.get('combined_score') is not None)
         matched_opportunities = sum(1 for opp in opportunities if opp.get('product_matches') is not None)
         
+        # Get content count
         content_query = supabase.table("generated_content").select("content_id", count="exact").execute()
         generated_content = content_query.count
         
+        # Get voice profiles count
         voice_query = supabase.table("voice_profiles").select("profile_id", count="exact").execute()
         voice_profiles = voice_query.count
         
+        # Get document chunks count
         chunks_query = supabase.table("document_chunks").select("chunk_id", count="exact").execute()
         document_chunks = chunks_query.count
         
