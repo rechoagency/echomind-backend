@@ -9,6 +9,10 @@ from datetime import datetime
 # Load environment variables from .env file
 load_dotenv()
 
+# Import routers from root directory (not routers/ subfolder)
+from client_onboarding_router import router as onboarding_router
+from metrics_api_router import router as metrics_router
+
 # Lazy-loaded Supabase client
 _supabase_client = None
 
@@ -59,6 +63,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Client Onboarding"])
+app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics & Analytics"])
 
 # Health check endpoints
 @app.get("/")
