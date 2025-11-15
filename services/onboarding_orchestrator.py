@@ -145,7 +145,7 @@ class OnboardingOrchestrator:
             opportunities = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("client_id", client_id)\
-                .order("discovered_at", desc=True)\
+                .order("created_at", desc=True)\
                 .limit(100)\
                 .execute()
             
@@ -161,13 +161,13 @@ class OnboardingOrchestrator:
                     
                     # Update opportunity
                     self.supabase.table("opportunities").update({
-                        "buying_intent_score": scores["buying_intent"],
-                        "pain_point_score": scores["pain_point"],
-                        "organic_lift_potential": scores["organic_lift"],
-                        "opportunity_score": scores["composite"],
-                        "priority": scores["priority"],
-                        "scored_at": datetime.utcnow().isoformat()
-                    }).eq("id", opp["id"]).execute()
+                        "subreddit_score": scores.get("subreddit", 50),
+                        "thread_score": scores.get("thread", 50),
+                        "user_score": scores.get("user", 50),
+                        "combined_score": scores["composite"],
+                        "priority_tier": scores["priority"],
+                        "updated_at": datetime.utcnow().isoformat()
+                    }).eq("opportunity_id", opp["opportunity_id"]).execute()
                     
                     scored_count += 1
                     
@@ -264,7 +264,7 @@ Return JSON:
             opportunities = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("client_id", client_id)\
-                .order("opportunity_score", desc=True)\
+                .order("combined_score", desc=True)\
                 .limit(posting_freq * 2)\
                 .execute()
             
@@ -277,7 +277,7 @@ Return JSON:
             
             # Generate calendar using AI
             opp_summary = "\n".join([
-                f"- [{opp.get('priority')}] r/{opp.get('subreddit')}: {opp.get('thread_title')[:100]}"
+                f"- [{opp.get('priority_tier')}] r/{opp.get('subreddit')}: {opp.get('thread_title')[:100]}"
                 for opp in opportunities.data[:10]
             ])
             
@@ -340,7 +340,7 @@ Return JSON:
             client_id = client.get("client_id") or client.get("id")
             
             # Fetch AUTO_IDENTIFY results
-            client_record = self.supabase.table("clients").select("*").eq("id", client_id).single().execute()
+            client_record = self.supabase.table("clients").select("*").eq("client_id", client_id).single().execute()
             auto_identify_results = {
                 "subreddits": client_record.data.get("subreddits", []),
                 "keywords": client_record.data.get("keywords", [])
@@ -350,7 +350,7 @@ Return JSON:
             opportunities_response = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("client_id", client_id)\
-                .order("opportunity_score", desc=True)\
+                .order("combined_score", desc=True)\
                 .limit(10)\
                 .execute()
             opportunities = opportunities_response.data if opportunities_response.data else []
