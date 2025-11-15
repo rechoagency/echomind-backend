@@ -112,6 +112,10 @@ class NotificationService:
             keywords = auto_identify.get("keywords", [])
             
             # Create analysis prompt
+            # Build subreddit and keyword lists
+            subreddit_list = "\n".join([f"- r/{s}" for s in subreddits[:10]])
+            keyword_list = "\n".join([f"- {k}" for k in keywords[:15]])
+            
             prompt = f"""Generate a comprehensive initial analysis report for {client.get('company_name')}.
 
 COMPANY INFO:
@@ -122,10 +126,10 @@ COMPANY INFO:
 
 AUTO-DISCOVERED DATA:
 Subreddits ({len(subreddits)}):
-{"\n".join([f"- r/{s}" for s in subreddits[:10]])}
+{subreddit_list}
 
 Keywords ({len(keywords)}):
-{"\n".join([f"- {k}" for k in keywords[:15]])}
+{keyword_list}
 
 OPPORTUNITY OVERVIEW:
 - Total opportunities found: {len(opportunities)}
