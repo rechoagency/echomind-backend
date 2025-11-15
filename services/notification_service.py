@@ -20,7 +20,7 @@ class NotificationService:
     
     def __init__(self, openai_api_key: str):
         self.openai = OpenAI(api_key=openai_api_key)
-        self.sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+        self.resend_api_key = os.getenv("RESEND_API_KEY")
     
     async def send_onboarding_complete_notification(
         self,
@@ -279,7 +279,7 @@ Format as a ready-to-post Reddit comment (2-3 paragraphs).
         analysis: Dict,
         sample: Dict
     ) -> Dict:
-        """Send formatted email via SendGrid"""
+        """Send formatted email via Resend (easiest, most reliable)"""
         try:
             email = client.get("notification_email") or client.get("primary_contact_email")
             
@@ -290,44 +290,39 @@ Format as a ready-to-post Reddit comment (2-3 paragraphs).
             # Build HTML email
             html_content = self._build_email_html(client, analysis, sample)
             
-            # If SendGrid configured, send email
-            if self.sendgrid_api_key:
+            # If Resend configured, send email
+            if self.resend_api_key:
                 headers = {
-                    "Authorization": f"Bearer {self.sendgrid_api_key}",
+                    "Authorization": f"Bearer {self.resend_api_key}",
                     "Content-Type": "application/json"
                 }
                 
                 payload = {
-                    "personalizations": [{
-                        "to": [{"email": email}],
-                        "subject": f"🎉 EchoMind Setup Complete for {client.get('company_name')}"
-                    }],
-                    "from": {"email": "notifications@echomind.io", "name": "EchoMind"},
-                    "content": [{
-                        "type": "text/html",
-                        "value": html_content
-                    }]
+                    "from": "EchoMind <onboarding@resend.dev>",
+                    "to": [email],
+                    "subject": f"🎉 EchoMind Setup Complete for {client.get('company_name')}",
+                    "html": html_content
                 }
                 
                 response = requests.post(
-                    "https://api.sendgrid.com/v3/mail/send",
+                    "https://api.resend.com/emails",
                     headers=headers,
                     json=payload,
                     timeout=10
                 )
                 
-                if response.status_code == 202:
-                    logger.info(f"✅ Email sent to {email}")
-                    return {"success": True, "email": email}
+                if response.status_code in [200, 201]:
+                    logger.info(f"✅ Email sent to {email} via Resend")
+                    return {"success": True, "email": email, "provider": "resend"}
                 else:
-                    logger.error(f"SendGrid error: {response.status_code} - {response.text}")
+                    logger.error(f"Resend error: {response.status_code} - {response.text}")
                     return {"success": False, "error": response.text}
             
             else:
-                # Log email content (for testing without SendGrid)
+                # Log email content (for testing without Resend)
                 logger.info(f"""
 ================================================================================
-📧 EMAIL NOTIFICATION (SendGrid not configured - logging only)
+📧 EMAIL NOTIFICATION (Resend not configured - logging only)
 ================================================================================
 TO: {email}
 SUBJECT: 🎉 EchoMind Setup Complete for {client.get('company_name')}
