@@ -77,7 +77,7 @@ async def list_clients(
             high_priority = supabase.table("opportunities")\
                 .select("opportunity_id", count="exact")\
                 .eq("client_id", client_id)\
-                .in_("priority", ["URGENT", "HIGH"])\
+                .in_("priority_tier", ["URGENT", "HIGH"])\
                 .execute()
             
             enriched_clients.append({
@@ -120,15 +120,15 @@ async def get_client_metrics(client_id: str):
             count = supabase.table("opportunities")\
                 .select("opportunity_id", count="exact")\
                 .eq("client_id", client_id)\
-                .eq("priority", priority)\
+                .eq("priority_tier", priority)\
                 .execute()
             priorities[priority.lower()] = len(count.data) if count.data else 0
         
         # Average scores
         opportunities = supabase.table("opportunities")\
-            .select("buying_intent_score, pain_point_score, organic_lift_potential, opportunity_score")\
+            .select("subreddit_score, thread_score, user_score, combined_score")\
             .eq("client_id", client_id)\
-            .not_.is_("opportunity_score", "null")\
+            .not_.is_("combined_score", "null")\
             .execute()
         
         avg_scores = {
@@ -141,10 +141,10 @@ async def get_client_metrics(client_id: str):
         if opportunities.data:
             total = len(opportunities.data)
             avg_scores = {
-                "buying_intent": round(sum(o.get("buying_intent_score", 0) for o in opportunities.data) / total, 1),
-                "pain_point": round(sum(o.get("pain_point_score", 0) for o in opportunities.data) / total, 1),
-                "organic_lift": round(sum(o.get("organic_lift_potential", 0) for o in opportunities.data) / total, 1),
-                "composite": round(sum(o.get("opportunity_score", 0) for o in opportunities.data) / total, 1)
+                "subreddit": round(sum(o.get("subreddit_score", 0) for o in opportunities.data) / total, 1),
+                "thread": round(sum(o.get("thread_score", 0) for o in opportunities.data) / total, 1),
+                "user": round(sum(o.get("user_score", 0) for o in opportunities.data) / total, 1),
+                "composite": round(sum(o.get("combined_score", 0) for o in opportunities.data) / total, 1)
             }
         
         # Product matchback success rate - FIXED: Use opportunity_id
@@ -214,10 +214,10 @@ async def get_client_opportunities(
         query = supabase.table("opportunities")\
             .select("*")\
             .eq("client_id", client_id)\
-            .order("opportunity_score", desc=True)
+            .order("combined_score", desc=True)
         
         if priority:
-            query = query.eq("priority", priority.upper())
+            query = query.eq("priority_tier", priority.upper())
         
         query = query.range(offset, offset + limit - 1)
         
