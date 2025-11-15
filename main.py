@@ -30,9 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Client Onboarding"])
-app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
+# Include routers - FIXED: Removed duplicate prefix
+app.include_router(onboarding_router, tags=["Client Onboarding"])
+app.include_router(metrics_router, tags=["Metrics"])
 
 @app.on_event("startup")
 async def startup_event():
