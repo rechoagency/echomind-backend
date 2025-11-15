@@ -387,6 +387,9 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
     def _build_email_html(self, client: Dict, analysis: Dict, sample: Dict) -> str:
         """Build rich HTML email"""
         
+        # Prepare analysis HTML (avoid backslash in f-string)
+        analysis_html = analysis.get('full_text', '').replace('\n', '<br>')
+        
         sample_html = ""
         if sample.get("sample_available"):
             opp = sample.get("opportunity", {})
@@ -439,7 +442,7 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                 
                 <div class="section">
                     <h2>📊 Initial Analysis Summary</h2>
-                    {analysis.get('full_text', '').replace('\n', '<br>')}
+                    {analysis_html}
                 </div>
                 
                 {sample_html}
