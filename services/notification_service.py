@@ -122,10 +122,10 @@ COMPANY INFO:
 
 AUTO-DISCOVERED DATA:
 Subreddits ({len(subreddits)}):
-{chr(10).join([f"- r/{s}" for s in subreddits[:10]])}
+{"\n".join([f"- r/{s}" for s in subreddits[:10]])}
 
 Keywords ({len(keywords)}):
-{chr(10).join([f"- {k}" for k in keywords[:15]])}
+{"\n".join([f"- {k}" for k in keywords[:15]])}
 
 OPPORTUNITY OVERVIEW:
 - Total opportunities found: {len(opportunities)}
