@@ -61,9 +61,9 @@ async def list_clients(
         for client in clients_result.data:
             client_id = client["client_id"]
             
-            # Get opportunity count
+            # Get opportunity count - FIXED: Use opportunity_id instead of id
             opp_count = supabase.table("opportunities")\
-                .select("id", count="exact")\
+                .select("opportunity_id", count="exact")\
                 .eq("client_id", client_id)\
                 .execute()
             
@@ -73,9 +73,9 @@ async def list_clients(
                 .eq("client_id", client_id)\
                 .execute()
             
-            # Get high-priority opportunity count
+            # Get high-priority opportunity count - FIXED: Use opportunity_id
             high_priority = supabase.table("opportunities")\
-                .select("id", count="exact")\
+                .select("opportunity_id", count="exact")\
                 .eq("client_id", client_id)\
                 .in_("priority", ["URGENT", "HIGH"])\
                 .execute()
@@ -114,11 +114,11 @@ async def get_client_metrics(client_id: str):
         if not client.data:
             raise HTTPException(status_code=404, detail="Client not found")
         
-        # Opportunities by priority
+        # Opportunities by priority - FIXED: Use opportunity_id
         priorities = {}
         for priority in ["URGENT", "HIGH", "MEDIUM", "LOW"]:
             count = supabase.table("opportunities")\
-                .select("id", count="exact")\
+                .select("opportunity_id", count="exact")\
                 .eq("client_id", client_id)\
                 .eq("priority", priority)\
                 .execute()
@@ -147,15 +147,15 @@ async def get_client_metrics(client_id: str):
                 "composite": round(sum(o.get("opportunity_score", 0) for o in opportunities.data) / total, 1)
             }
         
-        # Product matchback success rate
+        # Product matchback success rate - FIXED: Use opportunity_id
         matched = supabase.table("opportunities")\
-            .select("id", count="exact")\
+            .select("opportunity_id", count="exact")\
             .eq("client_id", client_id)\
             .not_.is_("product_matches", "null")\
             .execute()
         
         total_opps = supabase.table("opportunities")\
-            .select("id", count="exact")\
+            .select("opportunity_id", count="exact")\
             .eq("client_id", client_id)\
             .execute()
         
@@ -285,12 +285,12 @@ async def get_dashboard_stats():
             .eq("subscription_status", "active")\
             .execute()
         
-        # Total opportunities
-        opportunities = supabase.table("opportunities").select("id", count="exact").execute()
+        # Total opportunities - FIXED: Use opportunity_id
+        opportunities = supabase.table("opportunities").select("opportunity_id", count="exact").execute()
         
-        # High priority opportunities
+        # High priority opportunities - FIXED: Use opportunity_id
         high_priority = supabase.table("opportunities")\
-            .select("id", count="exact")\
+            .select("opportunity_id", count="exact")\
             .in_("priority", ["URGENT", "HIGH"])\
             .execute()
         
