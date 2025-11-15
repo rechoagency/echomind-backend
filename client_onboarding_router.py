@@ -83,7 +83,7 @@ async def register_client(request: ClientOnboardingRequest):
         }
         
         client_result = supabase.table("clients").insert(client_data).execute()
-        client_id = client_result.data[0]["client_id"]  # ← FIXED: Use client_id not id
+        client_id = client_result.data[0]["client_id"]
         
         logger.info(f"Client created with ID: {client_id}")
         
@@ -133,6 +133,85 @@ async def register_client(request: ClientOnboardingRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/onboard")
+async def onboard_client(request: dict):
+    """
+    Complete client onboarding - Frontend endpoint
+    Matches the frontend form structure exactly
+    """
+    try:
+        logger.info(f"Onboarding new client: {request.get('company_name')}")
+        
+        supabase = get_supabase()
+        
+        # Create client record with all fields from frontend
+        client_data = {
+            "company_name": request.get("company_name"),
+            "industry": request.get("industry"),
+            "website_url": request.get("website_url"),
+            "products": json.dumps(request.get("products", [])),
+            "brand_voice": request.get("brand_voice_guidelines"),
+            "response_guidelines": request.get("brand_voice_guidelines"),
+            "contact_email": request.get("notification_email"),
+            "onboarding_status": "active",
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        client_result = supabase.table("clients").insert(client_data).execute()
+        client_id = client_result.data[0]["client_id"]
+        
+        logger.info(f"Client created with ID: {client_id}")
+        
+        # Configure subreddit monitoring
+        target_subreddits = request.get("target_subreddits", [])
+        if target_subreddits and target_subreddits != ["AUTO_IDENTIFY"]:
+            subreddit_configs = []
+            for subreddit_name in target_subreddits:
+                subreddit_config = {
+                    "client_id": client_id,
+                    "subreddit_name": subreddit_name.lower().replace("r/", ""),
+                    "is_active": True,
+                    "created_at": datetime.utcnow().isoformat()
+                }
+                subreddit_configs.append(subreddit_config)
+            
+            if subreddit_configs:
+                supabase.table("client_subreddit_config").insert(subreddit_configs).execute()
+                logger.info(f"Configured {len(subreddit_configs)} subreddits")
+        
+        # Configure keyword monitoring
+        target_keywords = request.get("target_keywords", [])
+        if target_keywords and target_keywords != ["AUTO_IDENTIFY"]:
+            keyword_configs = []
+            for keyword in target_keywords:
+                keyword_config = {
+                    "client_id": client_id,
+                    "keyword": keyword,
+                    "is_active": True,
+                    "created_at": datetime.utcnow().isoformat()
+                }
+                keyword_configs.append(keyword_config)
+            
+            if keyword_configs:
+                supabase.table("client_keyword_config").insert(keyword_configs).execute()
+                logger.info(f"Configured {len(target_keywords)} keywords")
+        
+        return JSONResponse(content={
+            "success": True,
+            "client_id": client_id,
+            "message": f"Client {request.get('company_name')} onboarded successfully",
+            "configuration": {
+                "subreddits": len(target_subreddits) if target_subreddits != ["AUTO_IDENTIFY"] else 0,
+                "keywords": len(target_keywords) if target_keywords != ["AUTO_IDENTIFY"] else 0,
+                "monitoring_status": "active"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error onboarding client: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/upload-documents/{client_id}")
 async def upload_documents(
     client_id: str,
@@ -149,7 +228,7 @@ async def upload_documents(
         
         logger.info(f"Processing {len(files)} documents for client {client_id}")
         
-        # Verify client exists - FIXED: Use client_id not id
+        # Verify client exists
         client_check = supabase.table("clients").select("client_id").eq("client_id", client_id).execute()
         if not client_check.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
@@ -228,7 +307,7 @@ async def get_client_configuration(client_id: str):
     try:
         supabase = get_supabase()
         
-        # Get client info - FIXED: Use client_id not id
+        # Get client info
         client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
         if not client.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
@@ -293,7 +372,6 @@ async def update_client_configuration(
         
         update_data["updated_at"] = datetime.utcnow().isoformat()
         
-        # FIXED: Use client_id not id
         result = supabase.table("clients").update(update_data).eq("client_id", client_id).execute()
         
         if not result.data:
