@@ -510,9 +510,9 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                     "text": {
                         "type": "mrkdwn",
                         "text": ("*📝 Sample Content Preview*\n\n" +
-                                 f"*Opportunity:* {opp.get('priority')} Priority ({opp.get('score')}/100)\n" +
-                                 f"*Subreddit:* r/{opp.get('subreddit')}\n" +
-                                 f"*Post:* {opp.get('title', '')[:100]}...\n" +
+                                 f"*Opportunity:* {opp.get('priority')} Priority ({opp.get('score')}/100)" + "\n" +
+                                 f"*Subreddit:* r/{opp.get('subreddit')}" + "\n" +
+                                 f"*Post:* {opp.get('title', '')[:100]}..." + "\n" +
                                  f"*Scheduled:* {sample.get('posting_time')}")
                     }
                 },
@@ -520,7 +520,7 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "*Suggested Response:*\n```" + str(sample.get('suggested_response', '')[:500]) + "```"
+                        "text": "*Suggested Response:*" + "\n```" + str(sample.get('suggested_response', '')[:500]) + "```"
                     }
                 }
             ])
