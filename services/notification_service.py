@@ -493,7 +493,7 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Executive Summary*\n{analysis.get('executive_summary', 'Analysis in progress...')}"
+                    "text": "*Executive Summary*\n" + str(analysis.get('executive_summary', 'Analysis in progress...'))
                 }
             }
         ]
@@ -509,14 +509,18 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*📝 Sample Content Preview*\n\n*Opportunity:* {opp.get('priority')} Priority ({opp.get('score')}/100)\n*Subreddit:* r/{opp.get('subreddit')}\n*Post:* {opp.get('title', '')[:100]}...\n*Scheduled:* {sample.get('posting_time')}"
+                        "text": ("*📝 Sample Content Preview*\n\n" +
+                                 f"*Opportunity:* {opp.get('priority')} Priority ({opp.get('score')}/100)\n" +
+                                 f"*Subreddit:* r/{opp.get('subreddit')}\n" +
+                                 f"*Post:* {opp.get('title', '')[:100]}...\n" +
+                                 f"*Scheduled:* {sample.get('posting_time')}")
                     }
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Suggested Response:*\n```{sample.get('suggested_response', '')[:500]}```"
+                        "text": "*Suggested Response:*\n```" + str(sample.get('suggested_response', '')[:500]) + "```"
                     }
                 }
             ])
