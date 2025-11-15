@@ -1,4 +1,4 @@
-# EchoMind Backend - Force Redeploy
+# EchoMind Backend - Complete System
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -8,17 +8,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Import routers (FIXED - removed routers. prefix)
+# Import routers
 from client_onboarding_router import router as onboarding_router
 from metrics_api_router import router as metrics_router
+from routers.dashboard_router import router as dashboard_router
 
 # Import Supabase client for startup checks
 from supabase_client import supabase
 
 app = FastAPI(
     title="EchoMind Backend API",
-    description="Reddit Marketing Automation SaaS Platform",
-    version="1.0.0"
+    description="Reddit Marketing Automation SaaS Platform - Complete System",
+    version="2.0.0"
 )
 
 # CORS middleware
@@ -30,14 +31,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers - FIXED: Removed duplicate prefix
+# Include routers
 app.include_router(onboarding_router, tags=["Client Onboarding"])
 app.include_router(metrics_router, tags=["Metrics"])
+app.include_router(dashboard_router, tags=["Dashboard"])
 
 @app.on_event("startup")
 async def startup_event():
     """Verify connections on startup"""
     print("🚀 EchoMind Backend Starting...")
+    print("   Version: 2.0.0 - Complete System")
     
     # Test Supabase connection
     try:
@@ -47,6 +50,7 @@ async def startup_event():
         # Simple query to verify connection
         result = supabase.table("clients").select("client_id").limit(1).execute()
         print("✅ Supabase connection established")
+        print("✅ All systems ready")
     except Exception as e:
         print(f"⚠️ Supabase connection warning: {e}")
 
@@ -60,8 +64,18 @@ async def root():
     """Health check endpoint"""
     return {
         "status": "active",
-        "service": "EchoMind Backend API",
-        "version": "1.0.0"
+        "service": "EchoMind Backend API - Complete System",
+        "version": "2.0.0",
+        "features": [
+            "Client Onboarding",
+            "AUTO_IDENTIFY (Subreddits & Keywords)",
+            "File Upload & Vectorization",
+            "Product Matchback",
+            "Opportunity Scoring",
+            "Content Calendar Generation",
+            "Client Dashboard",
+            "Email Notifications"
+        ]
     }
 
 @app.get("/health")
@@ -70,7 +84,8 @@ async def health_check():
     return {
         "status": "healthy",
         "database": "connected",
-        "redis": "available"
+        "redis": "available",
+        "version": "2.0.0"
     }
 
 if __name__ == "__main__":
