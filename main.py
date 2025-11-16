@@ -40,7 +40,7 @@ app.include_router(admin_router, tags=["Admin"])
 
 @app.on_event("startup")
 async def startup_event():
-    """Verify connections on startup"""
+    """Verify connections on startup and initialize scheduler"""
     print("🚀 EchoMind Backend Starting...")
     print("   Version: 2.0.0 - Complete System")
     
@@ -55,11 +55,48 @@ async def startup_event():
         print("✅ All systems ready")
     except Exception as e:
         print(f"⚠️ Supabase connection warning: {e}")
+    
+    # Initialize weekly report scheduler
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from workers.weekly_report_generator import send_weekly_reports
+        import asyncio
+        
+        scheduler = AsyncIOScheduler()
+        
+        # Monday & Thursday at 7am EST (12pm UTC)
+        scheduler.add_job(
+            func=lambda: asyncio.create_task(send_weekly_reports()),
+            trigger=CronTrigger(
+                day_of_week='mon,thu',
+                hour=12,  # 12pm UTC = 7am EST
+                minute=0,
+                timezone='UTC'
+            ),
+            id='weekly_reports',
+            name='Send Weekly Reports to All Clients',
+            replace_existing=True
+        )
+        
+        scheduler.start()
+        print("✅ Weekly report scheduler initialized (Mon/Thu 7am EST)")
+        
+        # Store scheduler in app state for shutdown
+        app.state.scheduler = scheduler
+        
+    except Exception as e:
+        print(f"⚠️ Scheduler initialization warning: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
     print("👋 EchoMind Backend Shutting Down...")
+    
+    # Shutdown scheduler if it exists
+    if hasattr(app.state, 'scheduler'):
+        app.state.scheduler.shutdown()
+        print("✅ Scheduler shut down")
 
 @app.get("/")
 async def root():
@@ -76,7 +113,8 @@ async def root():
             "Opportunity Scoring",
             "Content Calendar Generation",
             "Client Dashboard",
-            "Email Notifications"
+            "Email Notifications",
+            "Weekly Reports (Mon/Thu 7am EST)"
         ]
     }
 

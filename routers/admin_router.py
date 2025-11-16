@@ -171,3 +171,66 @@ async def resend_notification(client_id: str):
     except Exception as e:
         logger.error(f"Error resending notification: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/send-weekly-reports")
+async def send_weekly_reports_to_all():
+    """
+    Manually trigger weekly report generation for all clients
+    Useful for testing the report system
+    """
+    try:
+        import asyncio
+        from workers.weekly_report_generator import WeeklyReportGenerator
+        
+        logger.info("Manual weekly report generation triggered")
+        
+        generator = WeeklyReportGenerator()
+        result = await generator.send_reports_to_all_clients()
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending weekly reports: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/send-weekly-report/{client_id}")
+async def send_weekly_report_to_client(client_id: str):
+    """
+    Send weekly report to a specific client
+    Useful for testing with individual clients
+    """
+    try:
+        from workers.weekly_report_generator import WeeklyReportGenerator
+        
+        supabase = get_supabase()
+        
+        # Fetch client
+        client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        client = client_response.data[0]
+        
+        logger.info(f"Manual weekly report for: {client.get('company_name')}")
+        
+        generator = WeeklyReportGenerator()
+        result = await generator._generate_and_send_report(client)
+        
+        return {
+            "success": result.get("success"),
+            "client_id": client_id,
+            "company_name": client.get("company_name"),
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending weekly report: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
