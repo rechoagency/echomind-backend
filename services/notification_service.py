@@ -165,7 +165,7 @@ Create a professional analysis report with these sections:
    - Long-term engagement potential
 
 5. NEXT STEPS (actionable items)
-   - What to expect Monday/Thursday mornings
+   - What to expect Monday/Thursday mornings at 7am EST
    - How to review and approve content
    - Dashboard usage tips
 
@@ -450,7 +450,7 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                 <div class="section">
                     <h2>🚀 What Happens Next</h2>
                     <ul>
-                        <li><strong>Every Monday & Thursday at 8am:</strong> You'll receive an email like this with top opportunities and suggested responses</li>
+                        <li><strong>Every Monday & Thursday at 7am EST:</strong> You'll receive an email like this with top opportunities and suggested responses</li>
                         <li><strong>Review in dashboard:</strong> Click the link below to see all opportunities, approve content, and track performance</li>
                         <li><strong>We handle posting:</strong> Once you approve, our system posts on your behalf at optimal times</li>
                         <li><strong>Continuous monitoring:</strong> EchoMind scans Reddit 24/7 for new opportunities</li>
@@ -556,7 +556,7 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": "💡 *You'll receive reports like this every Monday & Thursday at 8am*"
+                        "text": "💡 *You'll receive reports like this every Monday & Thursday at 7am EST*"
                     }
                 ]
             }
