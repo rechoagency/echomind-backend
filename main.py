@@ -13,6 +13,7 @@ from client_onboarding_router import router as onboarding_router
 from metrics_api_router import router as metrics_router
 from routers.dashboard_router import router as dashboard_router
 from routers.admin_router import router as admin_router
+from routers.option_b_router import router as option_b_router
 
 # Import Supabase client for startup checks
 from supabase_client import supabase
@@ -37,6 +38,7 @@ app.include_router(onboarding_router, tags=["Client Onboarding"])
 app.include_router(metrics_router, tags=["Metrics"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(admin_router, tags=["Admin"])
+app.include_router(option_b_router, tags=["Option B Workers"])
 
 @app.on_event("startup")
 async def startup_event():
