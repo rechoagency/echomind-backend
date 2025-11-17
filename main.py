@@ -63,11 +63,13 @@ async def startup_event():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
         from workers.weekly_report_generator import send_weekly_reports
+        from workers.brand_mention_monitor import run_brand_mention_monitor
+        from workers.auto_reply_generator import run_auto_reply_generator
         import asyncio
         
         scheduler = AsyncIOScheduler()
         
-        # Monday & Thursday at 7am EST (12pm UTC)
+        # Weekly Reports: Monday & Thursday at 7am EST (12pm UTC)
         scheduler.add_job(
             func=lambda: asyncio.create_task(send_weekly_reports()),
             trigger=CronTrigger(
@@ -81,8 +83,37 @@ async def startup_event():
             replace_existing=True
         )
         
+        # Brand Mention Monitor: Daily at 9am EST (2pm UTC)
+        scheduler.add_job(
+            func=lambda: asyncio.to_thread(run_brand_mention_monitor),
+            trigger=CronTrigger(
+                hour=14,  # 2pm UTC = 9am EST
+                minute=0,
+                timezone='UTC'
+            ),
+            id='brand_mention_monitor',
+            name='Daily Brand Mention Scan',
+            replace_existing=True
+        )
+        
+        # Auto-Reply Generator: Every 6 hours
+        scheduler.add_job(
+            func=lambda: asyncio.to_thread(run_auto_reply_generator),
+            trigger=CronTrigger(
+                hour='*/6',  # Every 6 hours: 0, 6, 12, 18 UTC
+                minute=0,
+                timezone='UTC'
+            ),
+            id='auto_reply_generator',
+            name='Auto-Reply Generation Every 6h',
+            replace_existing=True
+        )
+        
         scheduler.start()
-        print("✅ Weekly report scheduler initialized (Mon/Thu 7am EST)")
+        print("✅ Scheduler initialized:")
+        print("   - Weekly reports (Mon/Thu 7am EST)")
+        print("   - Brand mentions (Daily 9am EST)")
+        print("   - Auto-replies (Every 6 hours)")
         
         # Store scheduler in app state for shutdown
         app.state.scheduler = scheduler
