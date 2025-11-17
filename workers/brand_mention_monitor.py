@@ -22,7 +22,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 reddit = praw.Reddit(
     client_id=os.getenv("REDDIT_CLIENT_ID"),
     client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-    user_agent=os.getenv("REDDIT_USER_AGENT")
+    user_agent=os.getenv("REDDIT_USER_AGENT", "EchoMind/1.0 by recho-agency")
 )
 
 
