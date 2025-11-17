@@ -74,16 +74,24 @@ async def trigger_voice_database_worker(
     Args:
         client_id: Optional client filter (if not provided, processes all clients)
     """
-    from workers.voice_database_worker import VoiceDatabaseWorker
+    from workers.voice_database_worker import build_client_voice_database
+    from supabase_client import get_supabase_client
     
     started_at = datetime.utcnow().isoformat()
     
-    def run_voice_worker():
-        worker = VoiceDatabaseWorker()
+    async def run_voice_worker():
         if client_id:
-            worker.process_client(client_id)
+            # Run for specific client
+            await build_client_voice_database(client_id)
         else:
-            worker.process_all_clients()
+            # Run for all clients
+            supabase = get_supabase_client()
+            clients_response = supabase.table("clients").select("client_id").execute()
+            for client in clients_response.data:
+                try:
+                    await build_client_voice_database(client['client_id'])
+                except Exception as e:
+                    print(f"Error building voice DB for {client['client_id']}: {e}")
     
     # Run in background
     background_tasks.add_task(run_voice_worker)
@@ -104,7 +112,6 @@ async def trigger_all_option_b_workers(background_tasks: BackgroundTasks):
     2. Brand Mention Monitor (scans for mentions)
     3. Auto Reply Generator (generates replies)
     """
-    from workers.voice_database_worker import VoiceDatabaseWorker
     from workers.brand_mention_monitor import run_brand_mention_monitor
     from workers.auto_reply_generator import run_auto_reply_generator
     
@@ -115,18 +122,15 @@ async def trigger_all_option_b_workers(background_tasks: BackgroundTasks):
         print("RUNNING ALL OPTION B WORKERS")
         print("=" * 70)
         
-        # Step 1: Voice Database
-        print("\n[1/3] Voice Database Worker...")
-        worker = VoiceDatabaseWorker()
-        worker.process_all_clients()
-        
-        # Step 2: Brand Mentions
-        print("\n[2/3] Brand Mention Monitor...")
+        # Step 1: Brand Mentions
+        print("\n[1/2] Brand Mention Monitor...")
         run_brand_mention_monitor()
         
-        # Step 3: Auto Replies
-        print("\n[3/3] Auto Reply Generator...")
+        # Step 2: Auto Replies
+        print("\n[2/2] Auto Reply Generator...")
         run_auto_reply_generator()
+        
+        print("\nNote: Voice Database Worker is async and should be run separately via /voice-database/run endpoint")
         
         print("\n✅ ALL OPTION B WORKERS COMPLETE")
     
@@ -135,7 +139,7 @@ async def trigger_all_option_b_workers(background_tasks: BackgroundTasks):
     
     return WorkerResponse(
         status="started",
-        message="All Option B workers started in background (Voice DB → Brand Mentions → Auto Replies)",
+        message="Brand Mentions and Auto Replies workers started. Run /voice-database/run separately for voice profiles.",
         started_at=started_at,
         worker_name="all_option_b_workers"
     )
@@ -146,6 +150,9 @@ async def get_option_b_status():
     """
     Get status of Option B features and recent activity
     """
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from supabase_client import supabase
     
     try:
