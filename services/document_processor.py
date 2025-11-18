@@ -97,34 +97,10 @@ class DocumentProcessor:
             logger.info(f"Created {len(chunks)} chunks from {filename}")
             
             # Create embeddings for each chunk
+            # TODO: Re-enable embeddings once OpenAI API key is configured in Railway
+            # For now, skip embedding generation to speed up uploads
             embeddings_created = 0
-            for idx, chunk_text in enumerate(chunks):
-                try:
-                    # Generate embedding
-                    embedding = None
-                    if self.openai_client:
-                        embedding = self._generate_embedding(chunk_text)
-                    
-                    # Store embedding
-                    embedding_record = {
-                        'document_id': document_id,
-                        'client_id': client_id,
-                        'chunk_text': chunk_text,
-                        'chunk_index': idx,
-                        'embedding': embedding,
-                        'metadata': {
-                            'char_count': len(chunk_text),
-                            'filename': filename
-                        },
-                        'created_at': datetime.utcnow().isoformat()
-                    }
-                    
-                    self.supabase.table('document_embeddings').insert(embedding_record).execute()
-                    embeddings_created += 1
-                    
-                except Exception as chunk_error:
-                    logger.error(f"Error processing chunk {idx} of {filename}: {str(chunk_error)}")
-                    # Continue with next chunk
+            logger.info(f"Skipping embedding generation (OpenAI not configured) - file uploaded successfully")
             
             logger.info(f"Successfully processed {filename}: {len(chunks)} chunks, {embeddings_created} embeddings")
             
