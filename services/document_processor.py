@@ -100,37 +100,27 @@ class DocumentProcessor:
             embeddings_created = 0
             for idx, chunk_text in enumerate(chunks):
                 try:
-                    # Generate embedding (with timeout protection)
+                    # Generate embedding
                     embedding = None
                     if self.openai_client:
-                        try:
-                            embedding = self._generate_embedding(chunk_text)
-                        except Exception as emb_error:
-                            logger.warning(f"Skipping embedding for chunk {idx}: {str(emb_error)}")
-                            embedding = None
+                        embedding = self._generate_embedding(chunk_text)
                     
-                    # Only store if we have an embedding or if we want to store text chunks anyway
-                    # For now, skip if no embedding to speed up upload
-                    if embedding is not None:
-                        # Store embedding
-                        embedding_record = {
-                            'document_id': document_id,
-                            'client_id': client_id,
-                            'chunk_text': chunk_text,
-                            'chunk_index': idx,
-                            'embedding': embedding,
-                            'metadata': {
-                                'char_count': len(chunk_text),
-                                'filename': filename
-                            },
-                            'created_at': datetime.utcnow().isoformat()
-                        }
-                        
-                        self.supabase.table('document_embeddings').insert(embedding_record).execute()
-                        embeddings_created += 1
-                    else:
-                        # Store chunk without embedding for later processing
-                        logger.info(f"Storing chunk {idx} without embedding (will process later)")
+                    # Store embedding
+                    embedding_record = {
+                        'document_id': document_id,
+                        'client_id': client_id,
+                        'chunk_text': chunk_text,
+                        'chunk_index': idx,
+                        'embedding': embedding,
+                        'metadata': {
+                            'char_count': len(chunk_text),
+                            'filename': filename
+                        },
+                        'created_at': datetime.utcnow().isoformat()
+                    }
+                    
+                    self.supabase.table('document_embeddings').insert(embedding_record).execute()
+                    embeddings_created += 1
                     
                 except Exception as chunk_error:
                     logger.error(f"Error processing chunk {idx} of {filename}: {str(chunk_error)}")
