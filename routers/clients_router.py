@@ -1,13 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from supabase import create_client
-import os
+from supabase_client import supabase
 
 router = APIRouter()
-
-# Supabase client
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
-supabase = create_client(supabase_url, supabase_key)
 
 @router.get("/clients/{client_id}")
 async def get_client(client_id: str):
