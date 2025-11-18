@@ -6,6 +6,9 @@ from typing import Dict, Any
 import os
 import logging
 
+from supabase_client import get_supabase_client
+from services.document_processor import DocumentProcessor
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -77,4 +80,32 @@ async def test_openai_connection() -> Dict[str, Any]:
             'error': str(e),
             'error_type': type(e).__name__,
             'openai_key_prefix': openai_key[:20] + '...' if openai_key else None
+        }
+
+
+@router.get("/debug/document-processor-status")
+async def check_document_processor() -> Dict[str, Any]:
+    """
+    Check DocumentProcessor initialization status
+    
+    Returns:
+        Current state of DocumentProcessor
+    """
+    try:
+        supabase = get_supabase_client()
+        processor = DocumentProcessor(supabase)
+        
+        return {
+            'success': True,
+            'openai_client_exists': processor.openai_client is not None,
+            'chunk_size': processor.chunk_size,
+            'chunk_overlap': processor.chunk_overlap,
+            'openai_api_key_in_env': bool(os.getenv('OPENAI_API_KEY')),
+            'openai_key_length': len(os.getenv('OPENAI_API_KEY')) if os.getenv('OPENAI_API_KEY') else 0
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
         }

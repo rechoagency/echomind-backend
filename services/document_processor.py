@@ -54,9 +54,15 @@ class DocumentProcessor:
         openai_key = os.getenv('OPENAI_API_KEY')
         if openai_key and OpenAI:
             self.openai_client = OpenAI(api_key=openai_key)
+            logger.info(f"OpenAI client initialized successfully (key length: {len(openai_key)})")
         else:
             self.openai_client = None
-            logger.warning("OpenAI API key not found - embeddings will be skipped")
+            if not openai_key:
+                logger.warning("OpenAI API key not found in environment - embeddings will be skipped")
+            elif not OpenAI:
+                logger.warning("OpenAI library not available - embeddings will be skipped")
+            else:
+                logger.warning("OpenAI initialization failed - embeddings will be skipped")
     
     async def process_document(
         self,
