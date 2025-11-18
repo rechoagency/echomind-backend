@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 # Import shared Supabase client
-from database import get_supabase_client
+from supabase_client import get_supabase_client
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

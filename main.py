@@ -66,68 +66,94 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Supabase connection warning: {e}")
     
-    # Initialize weekly report scheduler
+    # Initialize weekly report scheduler (optional - app works without it)
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
-        from workers.weekly_report_generator import send_weekly_reports
-        from workers.brand_mention_monitor import run_brand_mention_monitor
-        from workers.auto_reply_generator import run_auto_reply_generator
         import asyncio
         
-        scheduler = AsyncIOScheduler()
+        # Try to import workers (may not exist in minimal deployment)
+        try:
+            from workers.weekly_report_generator import send_weekly_reports
+            has_weekly_reports = True
+        except ImportError:
+            has_weekly_reports = False
+            print("⚠️ weekly_report_generator not available")
         
-        # Weekly Reports: Monday & Thursday at 7am EST (12pm UTC)
-        scheduler.add_job(
-            func=lambda: asyncio.create_task(send_weekly_reports()),
-            trigger=CronTrigger(
-                day_of_week='mon,thu',
-                hour=12,  # 12pm UTC = 7am EST
-                minute=0,
-                timezone='UTC'
-            ),
-            id='weekly_reports',
-            name='Send Weekly Reports to All Clients',
-            replace_existing=True
-        )
+        try:
+            from workers.brand_mention_monitor import run_brand_mention_monitor
+            has_brand_monitor = True
+        except ImportError:
+            has_brand_monitor = False
+            print("⚠️ brand_mention_monitor not available")
         
-        # Brand Mention Monitor: Daily at 9am EST (2pm UTC)
-        scheduler.add_job(
-            func=lambda: asyncio.to_thread(run_brand_mention_monitor),
-            trigger=CronTrigger(
-                hour=14,  # 2pm UTC = 9am EST
-                minute=0,
-                timezone='UTC'
-            ),
-            id='brand_mention_monitor',
-            name='Daily Brand Mention Scan',
-            replace_existing=True
-        )
+        try:
+            from workers.auto_reply_generator import run_auto_reply_generator
+            has_auto_reply = True
+        except ImportError:
+            has_auto_reply = False
+            print("⚠️ auto_reply_generator not available")
         
-        # Auto-Reply Generator: Every 6 hours
-        scheduler.add_job(
-            func=lambda: asyncio.to_thread(run_auto_reply_generator),
-            trigger=CronTrigger(
-                hour='*/6',  # Every 6 hours: 0, 6, 12, 18 UTC
-                minute=0,
-                timezone='UTC'
-            ),
-            id='auto_reply_generator',
-            name='Auto-Reply Generation Every 6h',
-            replace_existing=True
-        )
-        
-        scheduler.start()
-        print("✅ Scheduler initialized:")
-        print("   - Weekly reports (Mon/Thu 7am EST)")
-        print("   - Brand mentions (Daily 9am EST)")
-        print("   - Auto-replies (Every 6 hours)")
-        
-        # Store scheduler in app state for shutdown
-        app.state.scheduler = scheduler
+        # Only initialize scheduler if at least one worker is available
+        if has_weekly_reports or has_brand_monitor or has_auto_reply:
+            scheduler = AsyncIOScheduler()
+            
+            # Weekly Reports: Monday & Thursday at 7am EST (12pm UTC)
+            if has_weekly_reports:
+                scheduler.add_job(
+                    func=lambda: asyncio.create_task(send_weekly_reports()),
+                    trigger=CronTrigger(
+                        day_of_week='mon,thu',
+                        hour=12,  # 12pm UTC = 7am EST
+                        minute=0,
+                        timezone='UTC'
+                    ),
+                    id='weekly_reports',
+                    name='Send Weekly Reports to All Clients',
+                    replace_existing=True
+                )
+                print("✅ Weekly reports scheduled (Mon/Thu 7am EST)")
+            
+            # Brand Mention Monitor: Daily at 9am EST (2pm UTC)
+            if has_brand_monitor:
+                scheduler.add_job(
+                    func=lambda: asyncio.to_thread(run_brand_mention_monitor),
+                    trigger=CronTrigger(
+                        hour=14,  # 2pm UTC = 9am EST
+                        minute=0,
+                        timezone='UTC'
+                    ),
+                    id='brand_mention_monitor',
+                    name='Daily Brand Mention Scan',
+                    replace_existing=True
+                )
+                print("✅ Brand mentions scheduled (Daily 9am EST)")
+            
+            # Auto-Reply Generator: Every 6 hours
+            if has_auto_reply:
+                scheduler.add_job(
+                    func=lambda: asyncio.to_thread(run_auto_reply_generator),
+                    trigger=CronTrigger(
+                        hour='*/6',  # Every 6 hours: 0, 6, 12, 18 UTC
+                        minute=0,
+                        timezone='UTC'
+                    ),
+                    id='auto_reply_generator',
+                    name='Auto-Reply Generation Every 6h',
+                    replace_existing=True
+                )
+                print("✅ Auto-replies scheduled (Every 6 hours)")
+            
+            scheduler.start()
+            app.state.scheduler = scheduler
+            print("✅ Scheduler initialized successfully")
+        else:
+            print("⚠️ No workers available - scheduler not initialized")
+            print("   API endpoints will still work normally")
         
     except Exception as e:
-        print(f"⚠️ Scheduler initialization warning: {e}")
+        print(f"⚠️ Scheduler initialization error: {e}")
+        print("   API endpoints will still work normally")
 
 @app.on_event("shutdown")
 async def shutdown_event():
