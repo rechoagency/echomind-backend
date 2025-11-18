@@ -360,3 +360,210 @@ async def trigger_summary_computation(
     except Exception as e:
         logger.error(f"Error computing summary for {client_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to compute summary: {str(e)}")
+
+
+# ============================================
+# CLIENT DASHBOARD ANALYTICS ENDPOINTS
+# ============================================
+
+@router.get("/performance/{client_id}")
+async def get_performance_analytics(client_id: str):
+    """
+    Get performance analytics for client dashboard
+    Returns: brand mentions, replies received, auto-responses, engagement rate
+    """
+    try:
+        from supabase_client import supabase
+        from datetime import timedelta
+        
+        # Calculate date range (last 30 days)
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=30)
+        
+        # Initialize counters
+        brand_mention_count = 0
+        auto_response_count = 0
+        replies_received = 0
+        
+        # Try to query brand mentions (table might not exist yet)
+        try:
+            brand_mentions_response = supabase.table('brand_mentions') \
+                .select('*', count='exact') \
+                .eq('client_id', client_id) \
+                .gte('detected_at', start_date.isoformat()) \
+                .execute()
+            brand_mention_count = brand_mentions_response.count if brand_mentions_response.count else 0
+        except:
+            pass
+        
+        # Try to query auto responses
+        try:
+            auto_responses_response = supabase.table('auto_responses') \
+                .select('*', count='exact') \
+                .eq('client_id', client_id) \
+                .gte('sent_at', start_date.isoformat()) \
+                .execute()
+            auto_response_count = auto_responses_response.count if auto_responses_response.count else 0
+            replies_received = auto_response_count
+        except:
+            pass
+        
+        # Query content delivered
+        try:
+            content_response = supabase.table('content_delivered') \
+                .select('*', count='exact') \
+                .eq('client_id', client_id) \
+                .gte('delivery_date', start_date.date().isoformat()) \
+                .execute()
+            total_posts = content_response.count if content_response.count else 0
+            engagement_rate = (replies_received / total_posts * 100) if total_posts > 0 else 0
+        except:
+            total_posts = 0
+            engagement_rate = 0
+        
+        return {
+            "brand_mentions": brand_mention_count,
+            "replies_received": replies_received,
+            "auto_responses_sent": auto_response_count,
+            "engagement_rate": round(engagement_rate, 2),
+            "period_days": 30
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting performance analytics: {e}")
+        return {
+            "brand_mentions": 0,
+            "replies_received": 0,
+            "auto_responses_sent": 0,
+            "engagement_rate": 0.0,
+            "period_days": 30
+        }
+
+
+@router.get("/activity-feed/{client_id}")
+async def get_activity_feed(client_id: str, limit: int = 50):
+    """
+    Get real-time activity feed showing brand mentions, replies, auto-responses
+    """
+    try:
+        from supabase_client import supabase
+        
+        activities = []
+        
+        # Try brand mentions
+        try:
+            brand_mentions = supabase.table('brand_mentions') \
+                .select('*') \
+                .eq('client_id', client_id) \
+                .order('detected_at', desc=True) \
+                .limit(limit) \
+                .execute()
+            
+            if brand_mentions.data:
+                for mention in brand_mentions.data:
+                    activities.append({
+                        'type': 'brand_mention',
+                        'title': 'Brand Mention Detected',
+                        'description': f"Someone mentioned your brand in r/{mention.get('subreddit', 'unknown')}",
+                        'subreddit': mention.get('subreddit'),
+                        'timestamp': mention.get('detected_at'),
+                        'sentiment': mention.get('sentiment_label', 'neutral')
+                    })
+        except:
+            pass
+        
+        # Try auto responses
+        try:
+            auto_responses = supabase.table('auto_responses') \
+                .select('*') \
+                .eq('client_id', client_id) \
+                .order('sent_at', desc=True) \
+                .limit(limit) \
+                .execute()
+            
+            if auto_responses.data:
+                for response in auto_responses.data:
+                    activities.append({
+                        'type': 'auto_response',
+                        'title': 'Auto-Response Generated',
+                        'description': response.get('response_text', '')[:200],
+                        'timestamp': response.get('sent_at'),
+                        'response_type': response.get('response_type')
+                    })
+        except:
+            pass
+        
+        # Try content deliveries
+        try:
+            content = supabase.table('content_delivered') \
+                .select('*') \
+                .eq('client_id', client_id) \
+                .order('delivery_time', desc=True) \
+                .limit(limit // 2) \
+                .execute()
+            
+            if content.data:
+                for item in content.data:
+                    activities.append({
+                        'type': 'content_delivered',
+                        'title': f"Content Ready: {item.get('content_type', 'post').upper()}",
+                        'description': f"For r/{item.get('subreddit', 'unknown')}",
+                        'subreddit': item.get('subreddit'),
+                        'timestamp': item.get('delivery_time')
+                    })
+        except:
+            pass
+        
+        # Sort by timestamp
+        activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        
+        return {
+            "activities": activities[:limit],
+            "total": len(activities)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting activity feed: {e}")
+        return {
+            "activities": [],
+            "total": 0
+        }
+
+
+@router.get("/delivery-history/{client_id}")
+async def get_delivery_history(
+    client_id: str,
+    start_date: str = None,
+    end_date: str = None,
+    content_type: str = None
+):
+    """
+    Get content delivery history with filters
+    """
+    try:
+        from supabase_client import supabase
+        
+        query = supabase.table('content_delivered') \
+            .select('*') \
+            .eq('client_id', client_id)
+        
+        if start_date:
+            query = query.gte('delivery_date', start_date)
+        if end_date:
+            query = query.lte('delivery_date', end_date)
+        if content_type and content_type != 'all':
+            query = query.eq('content_type', content_type)
+        
+        response = query.order('delivery_time', desc=True).limit(100).execute()
+        
+        return {
+            "content": response.data or [],
+            "total": len(response.data) if response.data else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting delivery history: {e}")
+        return {
+            "content": [],
+            "total": 0
+        }
