@@ -102,7 +102,8 @@ async def upload_client_documents(
                     continue
                 
                 # Validate file type
-                allowed_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.json', '.txt', '.md']
+                allowed_extensions = ['.pdf', '.docx', '.xls', '.xlsx', '.csv', '.json', '.txt', '.md']
+                # Note: .doc (old Word format) not supported - only .docx
                 if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
                     results.append({
                         'filename': file.filename,
