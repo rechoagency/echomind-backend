@@ -105,14 +105,17 @@ class DocumentProcessor:
             # Create embeddings for each chunk (with timeout protection)
             embeddings_created = 0
             if not self.openai_client:
-                logger.info(f"Skipping embedding generation (OpenAI not configured) - file uploaded successfully")
+                logger.warning(f"Skipping embedding generation (OpenAI not configured) - file uploaded successfully")
             else:
+                logger.info(f"Starting embedding generation for {len(chunks)} chunks of {filename}")
                 for idx, chunk_text in enumerate(chunks):
                     try:
+                        logger.info(f"Processing chunk {idx+1}/{len(chunks)} for {filename}")
                         # Generate embedding with timeout
                         embedding = self._generate_embedding(chunk_text)
                         
                         if embedding:
+                            logger.info(f"Generated embedding for chunk {idx}, length: {len(embedding)}")
                             # Store embedding
                             embedding_record = {
                                 'document_id': document_id,
@@ -127,10 +130,14 @@ class DocumentProcessor:
                                 'created_at': datetime.utcnow().isoformat()
                             }
                             
+                            logger.info(f"Inserting embedding record for chunk {idx}")
                             self.supabase.table('document_embeddings').insert(embedding_record).execute()
                             embeddings_created += 1
+                            logger.info(f"Successfully stored embedding {idx}")
+                        else:
+                            logger.warning(f"Embedding generation returned None for chunk {idx}")
                     except Exception as chunk_error:
-                        logger.warning(f"Error processing chunk {idx} of {filename}: {str(chunk_error)}")
+                        logger.error(f"Error processing chunk {idx} of {filename}: {str(chunk_error)}", exc_info=True)
                         # Continue with next chunk
             
             logger.info(f"Successfully processed {filename}: {len(chunks)} chunks, {embeddings_created} embeddings")
