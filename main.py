@@ -167,6 +167,19 @@ async def health_check():
         "version": "2.0.0"
     }
 
+@app.get("/routes")
+async def list_routes():
+    """List all registered routes for debugging"""
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods'):
+            routes.append({
+                "path": route.path,
+                "name": route.name,
+                "methods": list(route.methods)
+            })
+    return {"total_routes": len(routes), "routes": routes}
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
