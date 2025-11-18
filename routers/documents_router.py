@@ -47,7 +47,7 @@ async def get_client_documents(client_id: str) -> List[Dict[str, Any]]:
         for doc in response.data:
             documents.append({
                 'id': doc.get('id'),
-                'filename': doc.get('filename'),
+                'filename': doc.get('file_name'),
                 'file_size': doc.get('file_size', 0),
                 'file_type': doc.get('file_type', 'Unknown'),
                 'uploaded_at': doc.get('uploaded_at'),
@@ -116,7 +116,7 @@ async def upload_client_documents(
                 
                 # Check for duplicates
                 existing = supabase.table('client_documents') \
-                    .select('id, filename') \
+                    .select('id, file_name') \
                     .eq('client_id', client_id) \
                     .eq('metadata->>file_hash', file_hash) \
                     .execute()
@@ -125,7 +125,7 @@ async def upload_client_documents(
                     results.append({
                         'filename': file.filename,
                         'success': False,
-                        'error': f'Duplicate file (already uploaded as {existing.data[0]["filename"]})'
+                        'error': f'Duplicate file (already uploaded as {existing.data[0]["file_name"]})'
                     })
                     continue
                 
@@ -136,7 +136,7 @@ async def upload_client_documents(
                 
                 document_record = {
                     'client_id': client_id,
-                    'filename': file.filename,
+                    'file_name': file.filename,
                     'file_type': file.content_type or 'application/octet-stream',
                     'file_size': len(content),
                     'file_url': f'data:{file.content_type};base64,{file_base64[:100]}...',  # Truncated for display
@@ -251,7 +251,7 @@ async def delete_client_document(client_id: str, document_id: str) -> Dict[str, 
         
         return {
             'success': True,
-            'message': f"Document '{document['filename']}' deleted successfully",
+            'message': f"Document '{document['file_name']}' deleted successfully",
             'document_id': document_id,
             'embeddings_deleted': embeddings_deleted
         }
@@ -306,7 +306,7 @@ async def get_document_embeddings_count(client_id: str, document_id: str) -> Dic
         
         return {
             'document_id': document_id,
-            'filename': document['filename'],
+            'filename': document['file_name'],
             'uploaded_at': document['uploaded_at'],
             'embedding_count': embedding_count,
             'file_size': document.get('file_size', 0)
