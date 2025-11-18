@@ -18,6 +18,7 @@ from routers.client_settings_router_CORRECTED import router as client_settings_r
 from routers.analytics_router import router as analytics_router
 from routers.clients_router import router as clients_router
 from routers.documents_router import router as documents_router
+from routers.debug_router import router as debug_router
 
 # Import Supabase client for startup checks
 from supabase_client import supabase
@@ -44,6 +45,7 @@ app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(client_settings_router, prefix="/api", tags=["Client Settings"])
 app.include_router(clients_router, prefix="/api", tags=["Clients"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
+app.include_router(debug_router, prefix="/api", tags=["Debug"])
 app.include_router(analytics_router, prefix="/api", tags=["Analytics"])
 app.include_router(admin_router, tags=["Admin"])
 app.include_router(option_b_router, tags=["Option B Workers"])
