@@ -45,14 +45,25 @@ async def get_client_documents(client_id: str) -> List[Dict[str, Any]]:
         # Format response for frontend
         documents = []
         for doc in response.data:
+            doc_id = doc.get('id')
+            
+            # Count embeddings for this document
+            embeddings_response = supabase.table('document_embeddings') \
+                .select('id', count='exact') \
+                .eq('document_id', doc_id) \
+                .execute()
+            
+            embedding_count = embeddings_response.count if embeddings_response.count else 0
+            
             documents.append({
-                'id': doc.get('id'),
+                'id': doc_id,
                 'filename': doc.get('file_name'),
                 'file_size': doc.get('file_size', 0),
                 'file_type': doc.get('file_type', 'Unknown'),
                 'uploaded_at': doc.get('uploaded_at'),
                 'file_url': doc.get('file_url'),
-                'metadata': doc.get('metadata', {})
+                'metadata': doc.get('metadata', {}),
+                'embedding_count': embedding_count
             })
         
         logger.info(f"Retrieved {len(documents)} documents for client {client_id}")
