@@ -85,6 +85,9 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "monthly_opportunity_budget": request.get("monthly_opportunity_budget"),
             "content_tone": request.get("content_tone"),
             "brand_voice_guidelines": request.get("brand_voice_guidelines"),
+            "brand_voice": request.get("brand_voice") or request.get("brand_voice_guidelines"),
+            "posting_guidelines": request.get("posting_guidelines"),
+            "special_instructions": request.get("special_instructions"),
             
             # Contact information
             "notification_email": request.get("notification_email"),

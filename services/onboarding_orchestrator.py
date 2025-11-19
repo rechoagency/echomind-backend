@@ -106,6 +106,11 @@ class OnboardingOrchestrator:
             if email_results.get("success"):
                 results["tasks_completed"].append("email_notification")
                 logger.info(f"✅ Email sent to {client.get('notification_email')}")
+            else:
+                results["tasks_failed"].append("email_notification")
+                logger.error(f"❌ Email failed: {email_results.get('error', 'Unknown error')}")
+                logger.error(f"   Target: {client.get('notification_email')}")
+                logger.error(f"   Details: {email_results.get('details', 'No details')}")
             
             # Update client status
             self.supabase.table("clients").update({
@@ -384,5 +389,7 @@ Return JSON:
             return notification_result
             
         except Exception as e:
-            logger.error(f"Email sending error: {str(e)}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"❌ Email sending error: {str(e)}")
+            import traceback
+            logger.error(f"   Traceback: {traceback.format_exc()}")
+            return {"success": False, "error": str(e), "traceback": traceback.format_exc()}

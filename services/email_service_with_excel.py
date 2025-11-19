@@ -234,7 +234,9 @@ class WelcomeEmailService:
             client_id = client.get('client_id', '')
             
             if not self.resend_api_key:
-                logger.error("RESEND_API_KEY not configured!")
+                logger.error("❌ CRITICAL: RESEND_API_KEY not configured in environment!")
+                logger.error("   Please set RESEND_API_KEY in Railway environment variables")
+                logger.error(f"   Attempted to send to: {email_to}")
                 return {"success": False, "error": "Resend API key not configured"}
             
             # HTML body
@@ -369,22 +371,33 @@ class WelcomeEmailService:
             }
             
             # Send via Resend API
+            logger.info(f"📧 Sending welcome email to {email_to} via Resend API...")
+            logger.info(f"   Intelligence Report size: {len(intelligence_report.getvalue())} bytes")
+            logger.info(f"   Sample Content size: {len(sample_content.getvalue())} bytes")
+            
             response = requests.post(
                 "https://api.resend.com/emails",
                 json=payload,
-                headers=headers
+                headers=headers,
+                timeout=30
             )
             
             if response.status_code == 200:
-                logger.info(f"✅ Welcome email sent successfully to {company_name} via Resend")
+                response_data = response.json()
+                logger.info(f"✅ Welcome email sent successfully to {company_name}")
+                logger.info(f"   Recipient: {email_to}")
+                logger.info(f"   Email ID: {response_data.get('id', 'N/A')}")
                 return {
                     "success": True,
                     "message": f"Welcome email sent to {email_to}",
                     "provider": "resend",
-                    "attachments": 2
+                    "attachments": 2,
+                    "email_id": response_data.get('id')
                 }
             else:
-                logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                logger.error(f"❌ Resend API error: {response.status_code}")
+                logger.error(f"   Response: {response.text}")
+                logger.error(f"   Target email: {email_to}")
                 return {
                     "success": False,
                     "error": f"Resend API error: {response.status_code}",

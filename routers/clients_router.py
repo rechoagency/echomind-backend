@@ -225,3 +225,91 @@ async def update_subreddits(client_id: str, data: dict):
     except Exception as e:
         logger.error(f"Error updating subreddits: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/user-profiles")
+async def get_user_profiles(client_id: str):
+    """Get Reddit user profiles for a client"""
+    try:
+        response = supabase.table('client_reddit_profiles') \
+            .select('*') \
+            .eq('client_id', client_id) \
+            .eq('is_active', True) \
+            .execute()
+        
+        return response.data or []
+    
+    except Exception as e:
+        logger.error(f"Error fetching user profiles: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/clients/{client_id}/test-welcome-email")
+async def test_welcome_email(client_id: str):
+    """Test endpoint to manually trigger welcome email for debugging"""
+    try:
+        import os
+        
+        # Get client data
+        client_response = supabase.table('clients').select('*').eq('client_id', client_id).single().execute()
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        client = client_response.data
+        
+        # Get opportunities for client
+        opps_response = supabase.table('opportunities') \
+            .select('*') \
+            .eq('client_id', client_id) \
+            .order('combined_score', desc=True) \
+            .limit(100) \
+            .execute()
+        
+        opportunities = opps_response.data if opps_response.data else []
+        
+        # Check if RESEND_API_KEY is set
+        resend_key = os.getenv('RESEND_API_KEY')
+        if not resend_key:
+            logger.error("❌ RESEND_API_KEY not configured in environment!")
+            return {
+                "success": False,
+                "error": "RESEND_API_KEY not configured in environment variables",
+                "debug": {
+                    "client_id": client_id,
+                    "client_name": client.get('company_name'),
+                    "notification_email": client.get('notification_email'),
+                    "opportunities_count": len(opportunities)
+                }
+            }
+        
+        # Send welcome email
+        logger.info(f"📧 TEST: Sending welcome email to {client.get('notification_email')}")
+        
+        from services.email_service_with_excel import WelcomeEmailService
+        email_service = WelcomeEmailService()
+        result = await email_service.send_welcome_email_with_reports(
+            client=client,
+            opportunities=opportunities
+        )
+        
+        return {
+            "success": result.get('success', False),
+            "message": "Welcome email test completed",
+            "email_result": result,
+            "debug": {
+                "client_id": client_id,
+                "client_name": client.get('company_name'),
+                "notification_email": client.get('notification_email'),
+                "opportunities_count": len(opportunities),
+                "resend_api_key_configured": bool(resend_key)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Test email error: {str(e)}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
