@@ -115,17 +115,46 @@ class ContentGenerationWorker:
         client_settings: Dict,
         mention_brand: bool,
         mention_product: bool,
-        brand_name: str
+        brand_name: str,
+        client_data: Optional[Dict] = None
     ) -> str:
         """
-        Build prompt for GPT content generation WITH slider controls
+        Build prompt for GPT content generation WITH slider controls AND subreddit ownership logic
         """
         thread_title = opportunity.get("thread_title", "")
         thread_content = opportunity.get("thread_content", "")
         subreddit = opportunity.get("subreddit_name", "")
         
-        # Base prompt
-        prompt = f"""You are a helpful Reddit community member responding in r/{subreddit}.
+        # Check if brand owns this subreddit
+        owned_subreddits = []
+        if client_data:
+            owned_subreddits = client_data.get('owned_subreddits', []) or client_data.get('brand_owned_subreddits', [])
+        
+        is_owned = subreddit in owned_subreddits or f"r/{subreddit}" in owned_subreddits
+        
+        # Base prompt with ownership-specific strategy
+        if is_owned:
+            # OWNED SUBREDDIT: Promotional seed content strategy
+            prompt = f"""You are the moderator/community manager of r/{subreddit}, a brand-owned community.
+
+**Your Goal:** Create engaging seed content to draw users and spark conversation.
+
+**Thread Title:** {thread_title}
+
+**Thread Content:** {thread_content}
+
+**Your Task:** Write promotional seed content that:
+1. Highlights {brand_name} products/services naturally
+2. Asks engaging questions to encourage community discussion
+3. Shares helpful tips, guides, or resources related to your brand
+4. Promotes upcoming sales, new products, or brand initiatives
+5. Builds excitement and community engagement
+
+**Tone:** Friendly brand voice, community-building, promotional but authentic
+"""
+        else:
+            # NOT OWNED: Careful, objective community reply strategy
+            prompt = f"""You are a helpful Reddit community member responding in r/{subreddit}.
 
 **Thread Title:** {thread_title}
 
@@ -174,8 +203,21 @@ These guidelines take precedence over all other instructions.
 
 """
         
-        # Final instructions
-        prompt += """**Important Guidelines:**
+        # Final instructions (different for owned vs not-owned)
+        if is_owned:
+            # Owned subreddit: More promotional, community-building
+            prompt += """**Posting Guidelines for Brand-Owned Community:**
+- COMMUNITY FIRST: Build genuine value and engagement
+- PROMOTIONAL ENCOURAGED: Highlight brand benefits, products, sales
+- CALL-TO-ACTION OK: "Check out our...", "Visit our store...", "Join our newsletter..."
+- BRAND VOICE: Use official brand tone and messaging
+- ENGAGE: Ask questions, request feedback, encourage discussion
+- SHOWCASE: Share product highlights, customer stories, brand news
+
+Write the engaging seed content now:"""
+        else:
+            # Not owned: Subtle, community-friendly, no hard selling
+            prompt += """**Important Guidelines (Community Subreddit):**
 - BE AUTHENTIC: Sound like a real person sharing experience, not an ad
 - BE HELPFUL FIRST: Address their problem genuinely before any product/brand mention
 - BE SUBTLE: If mentioning a product or brand, do it naturally ("I've had good results with...", "something that helped me was...")
@@ -183,6 +225,7 @@ These guidelines take precedence over all other instructions.
 - MATCH THE TONE: Use the community's voice style
 - BE BRIEF: 2-4 sentences max, Reddit users prefer concise responses
 - NO HARD SELLING: Never use sales language or call-to-actions
+- COMMUNITY RULES: Respect the community, don't spam or over-promote
 
 Write the response now:"""
         
@@ -267,7 +310,7 @@ Write the response now:"""
                 # Get product matches
                 product_matches = opportunity.get('product_matchback')
                 
-                # STEP 7: Build prompt with special instructions
+                # STEP 7: Build prompt with special instructions AND ownership logic
                 prompt = self.build_generation_prompt(
                     opportunity=opportunity,
                     voice_profile=voice_profile,
@@ -275,7 +318,8 @@ Write the response now:"""
                     client_settings=settings,
                     mention_brand=mention_brand,
                     mention_product=mention_product,
-                    brand_name=brand_name
+                    brand_name=brand_name,
+                    client_data=client  # Pass client data for ownership check
                 )
                 
                 # STEP 8: Generate with AI

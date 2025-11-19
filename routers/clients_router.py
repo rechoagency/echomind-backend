@@ -244,6 +244,158 @@ async def get_user_profiles(client_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/clients/{client_id}/documents")
+async def get_client_documents(client_id: str):
+    """Get all uploaded documents for a client"""
+    try:
+        response = supabase.table('document_uploads') \
+            .select('*') \
+            .eq('client_id', client_id) \
+            .order('created_at', desc=True) \
+            .execute()
+        
+        documents = response.data or []
+        
+        # Return formatted document list
+        return {
+            "success": True,
+            "count": len(documents),
+            "documents": [{
+                "id": doc.get('id'),
+                "filename": doc.get('filename'),
+                "file_type": doc.get('file_type'),
+                "document_type": doc.get('document_type'),
+                "file_size_bytes": doc.get('file_size_bytes'),
+                "chunks_created": doc.get('chunks_created', 0),
+                "vectors_created": doc.get('vectors_created', 0),
+                "created_at": doc.get('created_at'),
+                "status": doc.get('status', 'processed')
+            } for doc in documents]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error fetching documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/clients/{client_id}/special-instructions")
+async def get_special_instructions(client_id: str):
+    """Get all special instructions for a client as array of blocks"""
+    try:
+        response = supabase.table('clients').select('special_instructions').eq('client_id', client_id).single().execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        instructions = response.data.get('special_instructions')
+        
+        # If special_instructions is a string, split by newlines into array
+        if isinstance(instructions, str):
+            blocks = [line.strip() for line in instructions.split('\n') if line.strip()]
+        elif isinstance(instructions, list):
+            blocks = instructions
+        else:
+            blocks = []
+        
+        return {
+            "success": True,
+            "instructions": blocks
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching special instructions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/clients/{client_id}/special-instructions")
+async def add_special_instruction(client_id: str, data: dict):
+    """Add a new special instruction block"""
+    try:
+        new_instruction = data.get('instruction', '').strip()
+        if not new_instruction:
+            raise HTTPException(status_code=400, detail="Instruction cannot be empty")
+        
+        # Get current instructions
+        response = supabase.table('clients').select('special_instructions').eq('client_id', client_id).single().execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        current = response.data.get('special_instructions')
+        
+        # Convert to array
+        if isinstance(current, str):
+            blocks = [line.strip() for line in current.split('\n') if line.strip()]
+        elif isinstance(current, list):
+            blocks = current
+        else:
+            blocks = []
+        
+        # Add new instruction
+        blocks.append(new_instruction)
+        
+        # Save back to database
+        supabase.table('clients').update({
+            'special_instructions': blocks
+        }).eq('client_id', client_id).execute()
+        
+        return {
+            "success": True,
+            "message": "Special instruction added",
+            "instructions": blocks
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding special instruction: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/clients/{client_id}/special-instructions/{index}")
+async def delete_special_instruction(client_id: str, index: int):
+    """Delete a special instruction by index"""
+    try:
+        # Get current instructions
+        response = supabase.table('clients').select('special_instructions').eq('client_id', client_id).single().execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        current = response.data.get('special_instructions')
+        
+        # Convert to array
+        if isinstance(current, str):
+            blocks = [line.strip() for line in current.split('\n') if line.strip()]
+        elif isinstance(current, list):
+            blocks = current
+        else:
+            blocks = []
+        
+        # Validate index
+        if index < 0 or index >= len(blocks):
+            raise HTTPException(status_code=400, detail="Invalid instruction index")
+        
+        # Remove instruction
+        blocks.pop(index)
+        
+        # Save back to database
+        supabase.table('clients').update({
+            'special_instructions': blocks
+        }).eq('client_id', client_id).execute()
+        
+        return {
+            "success": True,
+            "message": "Special instruction deleted",
+            "instructions": blocks
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting special instruction: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/clients/{client_id}/test-welcome-email")
 async def test_welcome_email(client_id: str):
     """Test endpoint to manually trigger welcome email for debugging"""
