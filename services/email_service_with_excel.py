@@ -4,11 +4,9 @@ Sends welcome email with Intelligence Report and Sample Content Excel files
 """
 
 import os
-import smtplib
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
+import requests
+import base64
 from datetime import datetime
 from typing import Dict, List
 from io import BytesIO
@@ -22,10 +20,8 @@ class WelcomeEmailService:
     """Sends welcome email with Intelligence Report and Sample Content Excel attachments"""
     
     def __init__(self):
-        self.smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        self.sender_email = os.getenv("ECHOMIND_EMAIL", "hello@echomind.io")
-        self.sender_password = os.getenv("ECHOMIND_EMAIL_PASSWORD")
+        self.resend_api_key = os.getenv("RESEND_API_KEY")
+        self.sender_email = os.getenv("ECHOMIND_EMAIL", "onboarding@resend.dev")
     
     async def send_welcome_email_with_reports(
         self,
@@ -230,18 +226,16 @@ class WelcomeEmailService:
         sample_content: BytesIO,
         opportunities: List[Dict]
     ) -> Dict:
-        """Send email via SMTP with Excel attachments"""
+        """Send email via Resend API with Excel attachments"""
         
         try:
             email_to = client.get('notification_email') or client.get('contact_email', 'client@example.com')
             company_name = client.get('company_name', 'Your Company')
             client_id = client.get('client_id', '')
             
-            # Create message
-            msg = MIMEMultipart()
-            msg['From'] = f"EchoMind Team <{self.sender_email}>"
-            msg['To'] = email_to
-            msg['Subject'] = f"🎉 Welcome to EchoMind - {company_name} Intelligence Report Ready!"
+            if not self.resend_api_key:
+                logger.error("RESEND_API_KEY not configured!")
+                return {"success": False, "error": "Resend API key not configured"}
             
             # HTML body
             html_body = f"""
@@ -347,42 +341,55 @@ class WelcomeEmailService:
 </html>
 """
             
-            msg.attach(MIMEText(html_body, 'html'))
+            # Encode Excel files to base64 for Resend API
+            intelligence_b64 = base64.b64encode(intelligence_report.read()).decode('utf-8')
+            sample_b64 = base64.b64encode(sample_content.read()).decode('utf-8')
             
-            # Attach Intelligence Report
-            intelligence_attachment = MIMEApplication(intelligence_report.read())
-            intelligence_attachment.add_header(
-                'Content-Disposition', 
-                'attachment', 
-                filename=f'{company_name}_Intelligence_Report.xlsx'
-            )
-            msg.attach(intelligence_attachment)
-            
-            # Attach Sample Content
-            sample_attachment = MIMEApplication(sample_content.read())
-            sample_attachment.add_header(
-                'Content-Disposition', 
-                'attachment', 
-                filename=f'{company_name}_25_Sample_Content.xlsx'
-            )
-            msg.attach(sample_attachment)
-            
-            # Send email
-            if not self.sender_password:
-                logger.error("ECHOMIND_EMAIL_PASSWORD not configured!")
-                return {"success": False, "error": "SMTP password not configured"}
-            
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.sender_email, self.sender_password)
-                server.send_message(msg)
-            
-            logger.info(f"✅ Welcome email sent successfully to {company_name}")
-            return {
-                "success": True,
-                "message": f"Welcome email sent to {email_to}",
-                "attachments": 2
+            # Prepare Resend API request
+            headers = {
+                "Authorization": f"Bearer {self.resend_api_key}",
+                "Content-Type": "application/json"
             }
+            
+            payload = {
+                "from": f"EchoMind Team <{self.sender_email}>",
+                "to": [email_to],
+                "subject": f"🎉 Welcome to EchoMind - {company_name} Intelligence Report Ready!",
+                "html": html_body,
+                "attachments": [
+                    {
+                        "filename": f"{company_name}_Intelligence_Report.xlsx",
+                        "content": intelligence_b64
+                    },
+                    {
+                        "filename": f"{company_name}_25_Sample_Content.xlsx",
+                        "content": sample_b64
+                    }
+                ]
+            }
+            
+            # Send via Resend API
+            response = requests.post(
+                "https://api.resend.com/emails",
+                json=payload,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Welcome email sent successfully to {company_name} via Resend")
+                return {
+                    "success": True,
+                    "message": f"Welcome email sent to {email_to}",
+                    "provider": "resend",
+                    "attachments": 2
+                }
+            else:
+                logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                return {
+                    "success": False,
+                    "error": f"Resend API error: {response.status_code}",
+                    "details": response.text
+                }
         
         except Exception as e:
             logger.error(f"❌ Error sending email: {str(e)}")
