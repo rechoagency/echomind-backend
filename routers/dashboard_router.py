@@ -291,7 +291,7 @@ async def get_dashboard_stats():
         # High priority opportunities - FIXED: Use opportunity_id
         high_priority = supabase.table("opportunities")\
             .select("opportunity_id", count="exact")\
-            .in_("priority", ["URGENT", "HIGH"])\
+            .in_("priority_tier", ["URGENT", "HIGH"])\
             .execute()
         
         return {
