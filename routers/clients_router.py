@@ -119,3 +119,4 @@ async def update_client(client_id: str, update_data: ClientUpdateRequest):
     except Exception as e:
         logger.error(f"Error updating client: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+# Updated: Wed Nov 19 16:10:58 UTC 2025
