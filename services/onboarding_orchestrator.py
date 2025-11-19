@@ -364,14 +364,22 @@ Return JSON:
                 if opp.get("product_matches"):
                     product_matches.extend(opp.get("product_matches", []))
             
-            # Send comprehensive notification using notification service
-            notification_result = await self.notification_service.send_onboarding_complete_notification(
+            # Send comprehensive notification using NEW email service with Excel attachments
+            from services.email_service_with_excel import WelcomeEmailService
+            email_service = WelcomeEmailService()
+            notification_result = await email_service.send_welcome_email_with_reports(
                 client=client_record.data,
-                auto_identify_results=auto_identify_results,
-                opportunities=opportunities,
-                calendar_items=calendar_items,
-                product_matches=product_matches
+                opportunities=opportunities
             )
+            
+            # Also send original notification (for Slack, etc.)
+            # await self.notification_service.send_onboarding_complete_notification(
+            #     client=client_record.data,
+            #     auto_identify_results=auto_identify_results,
+            #     opportunities=opportunities,
+            #     calendar_items=calendar_items,
+            #     product_matches=product_matches
+            # )
             
             return notification_result
             
