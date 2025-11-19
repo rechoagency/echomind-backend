@@ -174,7 +174,7 @@ async def root():
     return {
         "status": "active",
         "service": "EchoMind Backend API - Complete System",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "features": [
             "Client Onboarding",
             "AUTO_IDENTIFY (Subreddits & Keywords)",
@@ -195,7 +195,7 @@ async def health_check():
         "status": "healthy",
         "database": "connected",
         "redis": "available",
-        "version": "2.0.0"
+        "version": "2.1.0"
     }
 
 @app.get("/routes")
