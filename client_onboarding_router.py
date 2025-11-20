@@ -79,12 +79,10 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             # Brand ownership
             "brand_owns_subreddit": request.get("brand_owns_subreddit", False),
             "brand_owned_subreddits": request.get("brand_owned_subreddits", []),
-            "moderator_usernames": request.get("moderator_usernames", []),
             
-            # Non-owned subreddit targeting
-            "target_non_owned_subreddit": request.get("target_non_owned_subreddit", False),
-            "non_owned_subreddits": request.get("non_owned_subreddits", []),
-            "non_owned_moderators": request.get("non_owned_moderators", []),
+            # NOTE: moderator_usernames, non_owned_subreddits, non_owned_moderators
+            # are collected from frontend but NOT saved to clients table (columns don't exist)
+            # These will be implemented when we add the columns to the database
             
             # Content strategy
             "posting_frequency": request.get("posting_frequency"),
@@ -93,12 +91,13 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "brand_voice_guidelines": request.get("brand_voice_guidelines") or request.get("brand_voice"),
             "brand_voice": request.get("brand_voice") or request.get("brand_voice_guidelines"),
             "special_instructions": request.get("special_instructions") or request.get("posting_guidelines"),
-            "explicit_instructions": request.get("explicit_instructions"),
             
-            # Strategy percentages (save to clients table)
-            "reply_percentage": request.get("reply_percentage", 70),
-            "brand_mention_percentage": request.get("brand_mention_percentage", 30),
-            "product_mention_percentage": request.get("product_mention_percentage", 20),
+            # Strategy percentages (save to strategy_settings JSON)
+            "strategy_settings": {
+                "reply_percentage": request.get("reply_percentage", 70),
+                "brand_mention_percentage": request.get("brand_mention_percentage", 30),
+                "product_mention_percentage": request.get("product_mention_percentage", 20)
+            },
             
             # Contact information
             "notification_email": request.get("notification_email"),
