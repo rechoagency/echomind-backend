@@ -79,6 +79,12 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             # Brand ownership
             "brand_owns_subreddit": request.get("brand_owns_subreddit", False),
             "brand_owned_subreddits": request.get("brand_owned_subreddits", []),
+            "moderator_usernames": request.get("moderator_usernames", []),
+            
+            # Non-owned subreddit targeting
+            "target_non_owned_subreddit": request.get("target_non_owned_subreddit", False),
+            "non_owned_subreddits": request.get("non_owned_subreddits", []),
+            "non_owned_moderators": request.get("non_owned_moderators", []),
             
             # Content strategy
             "posting_frequency": request.get("posting_frequency"),
