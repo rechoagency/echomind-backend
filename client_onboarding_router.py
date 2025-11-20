@@ -89,7 +89,7 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "content_tone": request.get("content_tone"),
             "brand_voice_guidelines": request.get("brand_voice_guidelines") or request.get("brand_voice"),
             "brand_voice": request.get("brand_voice") or request.get("brand_voice_guidelines"),
-            "special_instructions": request.get("special_instructions") or request.get("posting_guidelines"),
+            "special_instructions": request.get("explicit_instructions") or request.get("special_instructions") or request.get("posting_guidelines"),
             
             # Strategy percentages and additional targeting data (save to strategy_settings JSON)
             "strategy_settings": {
