@@ -81,8 +81,7 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "brand_owned_subreddits": request.get("brand_owned_subreddits", []),
             
             # NOTE: moderator_usernames, non_owned_subreddits, non_owned_moderators
-            # are collected from frontend but NOT saved to clients table (columns don't exist)
-            # These will be implemented when we add the columns to the database
+            # are saved to strategy_settings JSON (see above) until dedicated columns are added
             
             # Content strategy
             "posting_frequency": request.get("posting_frequency"),
@@ -92,11 +91,15 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "brand_voice": request.get("brand_voice") or request.get("brand_voice_guidelines"),
             "special_instructions": request.get("special_instructions") or request.get("posting_guidelines"),
             
-            # Strategy percentages (save to strategy_settings JSON)
+            # Strategy percentages and additional targeting data (save to strategy_settings JSON)
             "strategy_settings": {
                 "reply_percentage": request.get("reply_percentage", 70),
                 "brand_mention_percentage": request.get("brand_mention_percentage", 30),
-                "product_mention_percentage": request.get("product_mention_percentage", 20)
+                "product_mention_percentage": request.get("product_mention_percentage", 20),
+                # Additional targeting configuration
+                "moderator_usernames": request.get("moderator_usernames", []),
+                "non_owned_subreddits": request.get("non_owned_subreddits", []),
+                "non_owned_moderators": request.get("non_owned_moderators", [])
             },
             
             # Contact information
