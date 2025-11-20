@@ -167,7 +167,13 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
                 logger.info(f"✅ Stored {len(profile_records)} Reddit profiles")
         
         # Schedule background orchestration (AUTO_IDENTIFY, scoring, calendar, etc.)
-        background_tasks.add_task(run_onboarding_orchestration, client_id)
+        # Now includes delayed report generation (5-10 minutes)
+        background_tasks.add_task(
+            run_onboarding_with_delayed_reports,
+            client_id,
+            request.get("notification_email"),
+            request.get("slack_webhook_url")
+        )
         
         logger.info(f"🎉 Onboarding complete for {request.get('company_name')}, orchestration scheduled")
         
@@ -175,6 +181,8 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "success": True,
             "client_id": client_id,
             "message": f"Client {request.get('company_name')} onboarded successfully",
+            "reports_message": "Intelligence reports will be ready in 5-10 minutes and sent to your email",
+            "reports_email": request.get("notification_email"),
             "redirect_url": f"/dashboard?client_id={client_id}",
             "configuration": {
                 "subreddits": len(target_subreddits) if target_subreddits != ["AUTO_IDENTIFY"] else "AUTO_IDENTIFY",
@@ -300,3 +308,55 @@ async def run_onboarding_orchestration(client_id: str):
         logger.info(f"✅ Orchestration complete: {result}")
     except Exception as e:
         logger.error(f"❌ Orchestration error: {str(e)}")
+
+
+async def run_onboarding_with_delayed_reports(
+    client_id: str,
+    notification_email: str,
+    slack_webhook: Optional[str] = None
+):
+    """
+    Background task: Complete onboarding + delayed report generation
+    
+    Flow:
+    1. Run standard orchestration (AUTO_IDENTIFY, scoring)
+    2. Wait for opportunities (5-10 minutes)
+    3. Generate Intelligence Report + Sample Content
+    4. Send welcome email with reports
+    5. (Optional) Slack notification
+    """
+    try:
+        logger.info(f"🚀 Starting onboarding + delayed reports for client {client_id}")
+        
+        # STEP 1: Run standard orchestration first
+        logger.info(f"🎯 Running onboarding orchestration...")
+        orchestrator = get_orchestrator()
+        result = await orchestrator.process_client_onboarding(client_id)
+        logger.info(f"✅ Orchestration complete: {result}")
+        
+        # STEP 2: Start delayed report workflow
+        logger.info(f"⏳ Starting delayed report generation workflow...")
+        from services.delayed_report_workflow import DelayedReportWorkflow
+        from openai import OpenAI
+        
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Note: email_service not needed - workflow handles email directly
+        workflow = DelayedReportWorkflow(
+            supabase_client=get_supabase(),
+            openai_client=openai_client,
+            email_service=None  # Not used
+        )
+        
+        await workflow.execute_workflow(
+            client_id=client_id,
+            notification_email=notification_email,
+            slack_webhook=slack_webhook,
+            min_opportunities=50,
+            timeout_seconds=600  # 10 minutes max
+        )
+        
+        logger.info(f"✅ Complete workflow finished for client {client_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Onboarding + reports error: {str(e)}", exc_info=True)
