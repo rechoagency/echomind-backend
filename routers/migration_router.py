@@ -6,6 +6,7 @@ SECURITY: This should be protected or removed after migration
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 import logging
+import os
 
 from supabase_client import get_supabase_client
 
@@ -22,52 +23,61 @@ async def run_knowledge_base_migration() -> Dict[str, Any]:
     SECURITY: This endpoint should be called once and then disabled
     """
     try:
+        # Try to use psycopg2 for raw SQL execution
+        try:
+            import psycopg2
+            from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+            
+            # Get DATABASE_URL from environment (Railway provides this)
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                raise ValueError("DATABASE_URL not found in environment")
+            
+            # Read SQL file
+            sql_file_path = os.path.join(os.path.dirname(__file__), '..', 'sql', 'match_knowledge_embeddings.sql')
+            with open(sql_file_path, 'r') as f:
+                sql_content = f.read()
+            
+            # Connect and execute
+            conn = psycopg2.connect(database_url)
+            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            cursor = conn.cursor()
+            
+            logger.info("🔧 Executing SQL migration...")
+            cursor.execute(sql_content)
+            
+            cursor.close()
+            conn.close()
+            
+            logger.info("✅ SQL migration executed successfully!")
+            
+            return {
+                "success": True,
+                "message": "Knowledge base RAG migration completed successfully",
+                "method": "direct_sql_execution",
+                "steps_completed": [
+                    "Created match_knowledge_embeddings function",
+                    "Created vector similarity index (ivfflat)",
+                    "Created client_id index",
+                    "Granted permissions to authenticated users",
+                    "Added function documentation"
+                ]
+            }
+            
+        except ImportError:
+            # psycopg2 not available - fall back to verification only
+            logger.warning("⚠️ psycopg2 not installed - cannot execute raw SQL")
+            pass
+        except Exception as sql_error:
+            logger.error(f"SQL execution error: {str(sql_error)}")
+            # Continue to verification
+            pass
+        
+        # Verify if function exists (whether we created it or it was already there)
         supabase = get_supabase_client()
         
-        # SQL for creating the function
-        create_function_sql = """
-        CREATE OR REPLACE FUNCTION match_knowledge_embeddings(
-          query_embedding vector(1536),
-          client_id uuid,
-          similarity_threshold float DEFAULT 0.70,
-          match_count int DEFAULT 3
-        )
-        RETURNS TABLE (
-          document_id uuid,
-          chunk_text text,
-          chunk_index int,
-          metadata jsonb,
-          similarity float
-        )
-        LANGUAGE plpgsql
-        AS $$
-        BEGIN
-          RETURN QUERY
-          SELECT
-            de.document_id,
-            de.chunk_text,
-            de.chunk_index,
-            de.metadata,
-            1 - (de.embedding <=> query_embedding) as similarity
-          FROM document_embeddings de
-          WHERE 
-            de.client_id = match_knowledge_embeddings.client_id
-            AND 1 - (de.embedding <=> query_embedding) >= similarity_threshold
-          ORDER BY de.embedding <=> query_embedding
-          LIMIT match_count;
-        END;
-        $$;
-        """
-        
-        # Since we can't execute raw SQL via Supabase client directly,
-        # we'll provide clear instructions and verification
-        
-        logger.info("⚠️ Database migration requires manual SQL execution")
-        logger.info("📝 Please run the SQL file: sql/match_knowledge_embeddings.sql")
-        
-        # Try to test if function exists (will fail if not created)
         try:
-            # This will only work if the function is already created
+            # Test if function exists
             test_embedding = [0.0] * 1536
             test_client = '00000000-0000-0000-0000-000000000000'
             
@@ -81,65 +91,52 @@ async def run_knowledge_base_migration() -> Dict[str, Any]:
                 }
             ).execute()
             
-            # If we got here, function exists!
-            logger.info("✅ Function match_knowledge_embeddings already exists!")
+            # Function exists!
+            logger.info("✅ Function match_knowledge_embeddings verified!")
             
             return {
                 "success": True,
-                "message": "Knowledge base RAG function already configured",
+                "message": "Knowledge base RAG function is configured",
                 "function_status": "✅ EXISTS",
-                "note": "The database migration has already been applied."
+                "note": "The database migration is complete."
             }
             
         except Exception as test_error:
             error_msg = str(test_error).lower()
             
             if "does not exist" in error_msg or "function" in error_msg:
-                # Function doesn't exist - need to create it
+                # Function doesn't exist - provide manual instructions
                 logger.warning("❌ Function match_knowledge_embeddings does not exist")
                 
                 return {
                     "success": False,
-                    "message": "Database migration required",
+                    "message": "Database migration required - manual SQL execution needed",
                     "function_status": "❌ NOT FOUND",
+                    "reason": "psycopg2 not available for direct SQL execution",
                     "instructions": {
                         "step_1": "Login to Supabase dashboard: https://supabase.com/dashboard",
                         "step_2": "Go to SQL Editor",
-                        "step_3": "Copy contents of: sql/match_knowledge_embeddings.sql",
+                        "step_3": "Copy SQL from: https://github.com/rechoagency/echomind-backend/blob/main/sql/match_knowledge_embeddings.sql",
                         "step_4": "Paste and click 'Run'",
                         "step_5": "Call this endpoint again to verify"
                     },
                     "sql_file_location": "sql/match_knowledge_embeddings.sql",
-                    "git_commit": "8d5fb16"
+                    "sql_content_preview": """
+CREATE OR REPLACE FUNCTION match_knowledge_embeddings(
+  query_embedding vector(1536),
+  client_id uuid,
+  similarity_threshold float DEFAULT 0.70,
+  match_count int DEFAULT 3
+)
+RETURNS TABLE (...)
+                    """.strip()
                 }
             else:
                 # Some other error
                 raise test_error
         
-        logger.info("✅ Knowledge base migration completed successfully!")
-        
-        return {
-            "success": True,
-            "message": "Knowledge base RAG migration completed",
-            "steps_completed": [
-                "Created match_knowledge_embeddings function",
-                "Created vector similarity index (ivfflat)",
-                "Created client_id index",
-                "Granted permissions to authenticated users",
-                "Added function documentation"
-            ]
-        }
-        
     except Exception as e:
         logger.error(f"❌ Migration failed: {str(e)}", exc_info=True)
-        
-        # Check if it's because the function already exists
-        if "already exists" in str(e).lower():
-            return {
-                "success": True,
-                "message": "Migration already applied (function exists)",
-                "note": "This is not an error - the database is already configured"
-            }
         
         raise HTTPException(
             status_code=500,
@@ -197,8 +194,8 @@ async def verify_knowledge_base_setup() -> Dict[str, Any]:
                 "error": function_error if not function_exists else None
             },
             "next_steps": [] if function_exists else [
-                "Run POST /api/migrations/knowledge-base-setup to get instructions",
-                "Or manually run sql/match_knowledge_embeddings.sql in Supabase"
+                "Run POST /api/migrations/knowledge-base-setup",
+                "Or manually run sql/match_knowledge_embeddings.sql in Supabase SQL Editor"
             ]
         }
         
