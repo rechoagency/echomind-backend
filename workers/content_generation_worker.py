@@ -11,6 +11,13 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
+import sys
+import os
+
+# Add parent directory to path for service imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.profile_rotation_service import ProfileRotationService
+from services.strategy_progression_service import StrategyProgressionService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +41,9 @@ class ContentGenerationWorker:
         """Initialize the content generation worker"""
         self.supabase = supabase
         self.openai = openai_client
-        logger.info("Content Generation Worker initialized (WITH SLIDER INTEGRATION)")
+        self.profile_rotation = ProfileRotationService()
+        self.strategy_progression = StrategyProgressionService()
+        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION & TIME-BASED STRATEGY)")
     
     def get_client_settings(self, client_id: str) -> Dict:
         """
@@ -261,14 +270,17 @@ Write the response now:"""
         client = client_response.data
         brand_name = client['company_name']
         
-        # STEP 2: Load client settings (SLIDER VALUES)
-        settings = self.get_client_settings(client_id)
+        # STEP 2: Load client settings WITH TIME-BASED PROGRESSION
+        settings = self.strategy_progression.get_effective_strategy(client_id)
         
-        logger.info(f"📊 Client Settings:")
+        logger.info(f"📊 Effective Strategy (Phase: {settings.get('phase_name', 'Unknown')}):")
+        logger.info(f"   Days Active: {settings.get('days_since_onboarding', 0)}")
         logger.info(f"   Reply Percentage: {settings['reply_percentage']}%")
         logger.info(f"   Brand Mention: {settings['brand_mention_percentage']}%")
         logger.info(f"   Product Mention: {settings['product_mention_percentage']}%")
-        logger.info(f"   Special Instructions: {'✅ Present' if settings['explicit_instructions'] else '❌ None'}\n")
+        if settings.get('phase_override_active'):
+            logger.info(f"   ⚠️ PHASE OVERRIDE ACTIVE: Using {settings['current_phase']} settings")
+        logger.info(f"   Special Instructions: {'✅ Present' if settings.get('explicit_instructions') else '❌ None'}\n")
         
         # STEP 3: Apply reply vs post ratio
         total_content = len(opportunities)
@@ -280,6 +292,14 @@ Write the response now:"""
         logger.info(f"   Total: {total_content} pieces")
         logger.info(f"   Replies: {num_replies}")
         logger.info(f"   Posts: {num_posts}\n")
+        
+        # STEP 3.5: Assign Reddit profiles to opportunities
+        logger.info(f"🔄 Assigning Reddit profiles...")
+        opportunities = self.profile_rotation.assign_profiles_to_opportunities(
+            client_id,
+            opportunities
+        )
+        logger.info(f"✅ Profile assignments complete\n")
         
         generated_content = []
         
@@ -335,7 +355,7 @@ Write the response now:"""
                 
                 content_text = response.choices[0].message.content.strip()
                 
-                # STEP 9: Log delivery to database
+                # STEP 9: Log delivery to database WITH PROFILE INFO
                 self.log_content_delivery(
                     client_id=client_id,
                     content_type=content_type,
@@ -345,7 +365,9 @@ Write the response now:"""
                     reddit_item_id=opportunity.get('reddit_id'),
                     brand_mentioned=mention_brand,
                     product_mentioned=opportunity.get('matched_product') if mention_product else None,
-                    delivery_batch=delivery_batch
+                    delivery_batch=delivery_batch,
+                    profile_id=opportunity.get('assigned_profile'),
+                    profile_username=opportunity.get('profile_username')
                 )
                 
                 generated_content.append({
@@ -353,7 +375,11 @@ Write the response now:"""
                     'text': content_text,
                     'subreddit': subreddit,
                     'brand_mentioned': mention_brand,
-                    'product_mentioned': mention_product
+                    'product_mentioned': mention_product,
+                    'assigned_profile': opportunity.get('profile_username', 'NO_PROFILE'),
+                    'profile_karma': opportunity.get('profile_karma', 0),
+                    'opportunity_id': opportunity.get('opportunity_id'),
+                    'thread_title': opportunity.get('thread_title', '')
                 })
                 
             except Exception as e:
@@ -379,9 +405,11 @@ Write the response now:"""
         reddit_item_id: str,
         brand_mentioned: bool,
         product_mentioned: Optional[str],
-        delivery_batch: Optional[str]
+        delivery_batch: Optional[str],
+        profile_id: Optional[str] = None,
+        profile_username: Optional[str] = None
     ):
-        """Log content delivery to database for analytics"""
+        """Log content delivery to database for analytics WITH PROFILE INFO"""
         try:
             self.supabase.table('content_delivered').insert({
                 'client_id': client_id,
@@ -397,7 +425,9 @@ Write the response now:"""
                 'generation_model': 'gpt-4',
                 'word_count': len(content_text.split()),
                 'character_count': len(content_text),
-                'delivery_batch': delivery_batch
+                'delivery_batch': delivery_batch,
+                'profile_id': profile_id,
+                'profile_username': profile_username
             }).execute()
             
             logger.info(f"      ✅ Logged {content_type} to content_delivered")

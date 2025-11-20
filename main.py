@@ -20,6 +20,7 @@ from routers.analytics_router import router as analytics_router
 from routers.clients_router import router as clients_router
 from routers.documents_router import router as documents_router
 from routers.debug_router import router as debug_router
+from routers.reports_router import router as reports_router
 
 # Import Supabase client for startup checks
 from supabase_client import supabase
@@ -48,6 +49,7 @@ app.include_router(clients_router, prefix="/api", tags=["Clients"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
 app.include_router(debug_router, prefix="/api", tags=["Debug"])
 app.include_router(analytics_router, prefix="/api", tags=["Analytics"])
+app.include_router(reports_router, prefix="/api", tags=["Reports"])
 app.include_router(admin_router, tags=["Admin"])
 app.include_router(option_b_router, tags=["Option B Workers"])
 
