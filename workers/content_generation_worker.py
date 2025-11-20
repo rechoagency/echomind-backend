@@ -18,6 +18,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.profile_rotation_service import ProfileRotationService
 from services.strategy_progression_service import StrategyProgressionService
+from services.knowledge_matchback_service import KnowledgeMatchbackService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +44,8 @@ class ContentGenerationWorker:
         self.openai = openai_client
         self.profile_rotation = ProfileRotationService()
         self.strategy_progression = StrategyProgressionService()
-        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION & TIME-BASED STRATEGY)")
+        self.knowledge_matchback = KnowledgeMatchbackService(supabase)
+        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION, TIME-BASED STRATEGY & KNOWLEDGE BASE RAG)")
     
     def get_client_settings(self, client_id: str) -> Dict:
         """
@@ -121,6 +123,7 @@ class ContentGenerationWorker:
         opportunity: Dict,
         voice_profile: Optional[Dict],
         product_matches: Optional[Dict],
+        knowledge_insights: Optional[List[Dict]],
         client_settings: Dict,
         mention_brand: bool,
         mention_product: bool,
@@ -188,6 +191,31 @@ class ContentGenerationWorker:
 - Tone: {dominant_tone}
 - Writing style: {"Often starts lowercase, relaxed" if lowercase_pct > 60 else "Standard capitalization"}
 - Enthusiasm: {"High energy, uses exclamation marks" if exclamation_pct > 10 else "Moderate, occasional excitement" if exclamation_pct > 5 else "Calm and measured"}
+
+"""
+        
+        # CRITICAL: Add knowledge base insights for ALL posts (thought leadership)
+        if knowledge_insights and len(knowledge_insights) > 0:
+            prompt += """\n**UNIQUE DATA & RESEARCH (from your company's knowledge base):**
+
+You have access to proprietary research, case studies, and data that most people don't have. Use these insights to add credibility and unique value to your response:
+
+"""
+            for i, insight in enumerate(knowledge_insights[:3], 1):
+                excerpt = insight.get('excerpt', '')
+                source = insight.get('source_filename', 'Internal Research')
+                relevance = insight.get('relevance_percentage', 0)
+                
+                prompt += f"{i}. **Insight from {source}** (relevance: {relevance}%):\n"
+                prompt += f"   {excerpt}\n\n"
+            
+            prompt += """**HOW TO USE THESE INSIGHTS:**
+- Naturally weave this data into your response when contextually relevant
+- DO NOT explicitly mention the company name or say "our research" during karma building phase
+- Frame it as "research shows..." or "data indicates..." or "studies have found..."
+- This positions you as a knowledgeable expert, not a marketer
+- Reddit, Google, and LLMs value unique information that can't be found elsewhere
+- This is KEY for building karma and trust before any brand mentions
 
 """
         
@@ -330,11 +358,22 @@ Write the response now:"""
                 # Get product matches
                 product_matches = opportunity.get('product_matchback')
                 
+                # CRITICAL: Get knowledge base insights for ALL posts (not just when products mentioned)
+                opportunity_text = f"{opportunity.get('reddit_item_title', '')}\n\n{opportunity.get('reddit_item_content', '')}"
+                knowledge_insights = self.knowledge_matchback.match_opportunity_to_knowledge(
+                    opportunity_text=opportunity_text,
+                    client_id=client_id,
+                    similarity_threshold=0.70,  # Lower than products (0.75) for broader matching
+                    max_insights=3
+                )
+                logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {[f\"{k['relevance_percentage']}%\" for k in knowledge_insights]})")
+                
                 # STEP 7: Build prompt with special instructions AND ownership logic
                 prompt = self.build_generation_prompt(
                     opportunity=opportunity,
                     voice_profile=voice_profile,
                     product_matches=product_matches,
+                    knowledge_insights=knowledge_insights,
                     client_settings=settings,
                     mention_brand=mention_brand,
                     mention_product=mention_product,
@@ -355,7 +394,7 @@ Write the response now:"""
                 
                 content_text = response.choices[0].message.content.strip()
                 
-                # STEP 9: Log delivery to database WITH PROFILE INFO
+                # STEP 9: Log delivery to database WITH PROFILE INFO & KNOWLEDGE INSIGHTS
                 self.log_content_delivery(
                     client_id=client_id,
                     content_type=content_type,
@@ -367,7 +406,8 @@ Write the response now:"""
                     product_mentioned=opportunity.get('matched_product') if mention_product else None,
                     delivery_batch=delivery_batch,
                     profile_id=opportunity.get('assigned_profile'),
-                    profile_username=opportunity.get('profile_username')
+                    profile_username=opportunity.get('profile_username'),
+                    knowledge_insights_count=len(knowledge_insights)
                 )
                 
                 generated_content.append({
@@ -407,9 +447,10 @@ Write the response now:"""
         product_mentioned: Optional[str],
         delivery_batch: Optional[str],
         profile_id: Optional[str] = None,
-        profile_username: Optional[str] = None
+        profile_username: Optional[str] = None,
+        knowledge_insights_count: int = 0
     ):
-        """Log content delivery to database for analytics WITH PROFILE INFO"""
+        """Log content delivery to database for analytics WITH PROFILE INFO & KNOWLEDGE BASE USAGE"""
         try:
             self.supabase.table('content_delivered').insert({
                 'client_id': client_id,
@@ -427,7 +468,11 @@ Write the response now:"""
                 'character_count': len(content_text),
                 'delivery_batch': delivery_batch,
                 'profile_id': profile_id,
-                'profile_username': profile_username
+                'profile_username': profile_username,
+                'metadata': {
+                    'knowledge_insights_count': knowledge_insights_count,
+                    'thought_leadership_enabled': knowledge_insights_count > 0
+                }
             }).execute()
             
             logger.info(f"      ✅ Logged {content_type} to content_delivered")

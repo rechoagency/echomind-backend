@@ -12,9 +12,11 @@ import io
 import logging
 
 from supabase_client import supabase
+from services.knowledge_matchback_service import KnowledgeMatchbackService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+knowledge_service = KnowledgeMatchbackService(supabase)
 
 
 @router.get("/reports/{client_id}/weekly-content")
@@ -275,4 +277,67 @@ async def get_profile_analytics(client_id: str):
     
     except Exception as e:
         logger.error(f"❌ Error getting profile analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/{client_id}/knowledge-base-stats")
+async def get_knowledge_base_stats(client_id: str):
+    """
+    Get statistics about client's knowledge base for thought leadership content
+    
+    Args:
+        client_id: Client UUID
+        
+    Returns:
+        Knowledge base statistics:
+        - documents_uploaded: Number of documents in knowledge base
+        - knowledge_chunks: Total number of embeddable insights
+        - avg_chunks_per_document: Average granularity
+        - estimated_coverage_kb: Approximate data volume
+    """
+    try:
+        logger.info(f"📚 Getting knowledge base stats for client {client_id}")
+        
+        # Get knowledge base statistics
+        stats = knowledge_service.get_knowledge_base_stats(client_id)
+        
+        # Get recent usage analytics
+        # Check how many posts in the last week cited knowledge insights
+        one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        
+        content_response = supabase.table('content_delivered') \
+            .select('id, metadata') \
+            .eq('client_id', client_id) \
+            .gte('delivery_date', one_week_ago) \
+            .execute()
+        
+        posts_with_insights = 0
+        total_insights_cited = 0
+        
+        if content_response.data:
+            for content in content_response.data:
+                metadata = content.get('metadata', {})
+                insights_used = metadata.get('knowledge_insights_count', 0)
+                if insights_used > 0:
+                    posts_with_insights += 1
+                    total_insights_cited += insights_used
+        
+        total_posts = len(content_response.data) if content_response.data else 0
+        usage_rate = round((posts_with_insights / total_posts * 100), 1) if total_posts > 0 else 0
+        
+        return {
+            "success": True,
+            "client_id": client_id,
+            "knowledge_base": stats,
+            "usage_last_7_days": {
+                "total_posts": total_posts,
+                "posts_with_insights": posts_with_insights,
+                "total_insights_cited": total_insights_cited,
+                "usage_rate_percentage": usage_rate,
+                "avg_insights_per_post": round(total_insights_cited / total_posts, 2) if total_posts > 0 else 0
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Error getting knowledge base stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
