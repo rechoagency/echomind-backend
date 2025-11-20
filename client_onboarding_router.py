@@ -87,6 +87,12 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             "brand_voice_guidelines": request.get("brand_voice_guidelines") or request.get("brand_voice"),
             "brand_voice": request.get("brand_voice") or request.get("brand_voice_guidelines"),
             "special_instructions": request.get("special_instructions") or request.get("posting_guidelines"),
+            "explicit_instructions": request.get("explicit_instructions"),
+            
+            # Strategy percentages (save to clients table)
+            "reply_percentage": request.get("reply_percentage", 70),
+            "brand_mention_percentage": request.get("brand_mention_percentage", 30),
+            "product_mention_percentage": request.get("product_mention_percentage", 20),
             
             # Contact information
             "notification_email": request.get("notification_email"),
@@ -164,6 +170,32 @@ async def onboard_client(request: dict, background_tasks: BackgroundTasks):
             if profile_records:
                 supabase.table("client_reddit_profiles").insert(profile_records).execute()
                 logger.info(f"✅ Stored {len(profile_records)} Reddit profiles")
+        
+        # Create client_settings record (for workers to read strategy settings)
+        reply_pct = request.get("reply_percentage", 70)
+        brand_mention_pct = request.get("brand_mention_percentage", 30)
+        product_mention_pct = request.get("product_mention_percentage", 20)
+        post_pct = 100 - reply_pct
+        
+        client_settings = {
+            "client_id": client_id,
+            "reply_percentage": reply_pct,
+            "post_percentage": post_pct,
+            "brand_mention_percentage": brand_mention_pct,
+            "product_mention_percentage": product_mention_pct,
+            "explicit_instructions": request.get("explicit_instructions"),
+            "product_relevance_threshold": 0.75,
+            "current_phase": 1,
+            "auto_phase_progression": False,
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        
+        try:
+            supabase.table("client_settings").insert(client_settings).execute()
+            logger.info(f"✅ Created client_settings: Reply {reply_pct}%, Brand {brand_mention_pct}%, Product {product_mention_pct}%")
+        except Exception as settings_error:
+            logger.warning(f"⚠️ Failed to create client_settings (non-critical): {settings_error}")
         
         # Schedule background orchestration (AUTO_IDENTIFY, scoring, calendar, etc.)
         # Now includes delayed report generation (5-10 minutes)
