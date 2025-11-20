@@ -162,13 +162,38 @@ async def update_strategy_settings(client_id: str, settings: dict):
         if not existing.data:
             raise HTTPException(status_code=404, detail="Client not found")
         
-        # Update database
-        response = supabase.table('clients').update({
+        # Update BOTH tables to ensure consistency across frontend and workers
+        # 1. Update clients.strategy_settings (for frontend display)
+        clients_response = supabase.table('clients').update({
             'strategy_settings': settings
         }).eq('client_id', client_id).execute()
         
-        if response.data:
-            logger.info(f"✅ Strategy settings updated for client {client_id}")
+        # 2. Update client_settings table (for workers and /api/client-settings endpoint)
+        # Calculate post_percentage from reply_percentage
+        post_percentage = 100 - settings['reply_percentage']
+        
+        settings_update = {
+            'reply_percentage': settings['reply_percentage'],
+            'post_percentage': post_percentage,
+            'brand_mention_percentage': settings['brand_mention_percentage'],
+            'product_mention_percentage': settings['product_mention_percentage']
+        }
+        
+        # Try to update existing settings or insert new row
+        existing_settings = supabase.table('client_settings').select('id').eq('client_id', client_id).execute()
+        
+        if existing_settings.data:
+            # Update existing
+            settings_response = supabase.table('client_settings').update(settings_update).eq('client_id', client_id).execute()
+        else:
+            # Insert new
+            settings_update['client_id'] = client_id
+            settings_response = supabase.table('client_settings').insert(settings_update).execute()
+        
+        if clients_response.data and settings_response.data:
+            logger.info(f"✅ Strategy settings updated in BOTH tables for client {client_id}")
+            logger.info(f"   Reply: {settings['reply_percentage']}%, Post: {post_percentage}%")
+            logger.info(f"   Brand: {settings['brand_mention_percentage']}%, Product: {settings['product_mention_percentage']}%")
             return {
                 "status": "success",
                 "message": "Strategy settings updated successfully",
