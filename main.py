@@ -194,24 +194,22 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check with actual database verification"""
-    from supabase_client import health_check as db_health_check
+    """Detailed health check with error handling"""
+    try:
+        from supabase_client import health_check as db_health_check
+        db_healthy = db_health_check()
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        db_healthy = False
     
-    # Actually check database connection
-    db_healthy = db_health_check()
-    
-    # Redis check (currently not used)
     redis_status = "not_configured"
-    
-    # Overall status
     status = "healthy" if db_healthy else "degraded"
     
     return {
         "status": status,
         "database": "connected" if db_healthy else "disconnected",
         "redis": redis_status,
-        "version": "2.1.0",
-        "timestamp": datetime.now().isoformat()
+        "version": "2.1.1"
     }
 
 @app.get("/routes")
