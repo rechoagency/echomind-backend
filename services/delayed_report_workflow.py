@@ -161,7 +161,8 @@ class DelayedReportWorkflow:
                 .execute()
             
             return response.data
-        except:
+        except Exception as e:
+            logger.error(f"Error fetching opportunities after timeout: {e}")
             return []
     
     async def _send_welcome_email_with_reports(
