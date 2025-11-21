@@ -452,26 +452,24 @@ Write the response now:"""
     ):
         """Log content delivery to database for analytics WITH PROFILE INFO & KNOWLEDGE BASE USAGE"""
         try:
+            # Map to actual database schema (uses delivered_at, subreddit_name, title/body)
             self.supabase.table('content_delivered').insert({
                 'client_id': client_id,
-                'delivery_date': date.today(),
-                'delivery_time': datetime.now(),
+                'delivered_at': datetime.now(),
                 'content_type': content_type,
-                'reddit_item_id': reddit_item_id,
-                'subreddit': subreddit,
-                'content_text': content_text,
+                'subreddit_name': subreddit,
+                'title': content_text[:500] if content_type == 'post' else None,  # First 500 chars for title
+                'body': content_text,
                 'opportunity_id': opportunity_id,
-                'product_mentioned': product_mentioned,
-                'brand_mentioned': brand_mentioned,
-                'generation_model': 'gpt-4',
-                'word_count': len(content_text.split()),
-                'character_count': len(content_text),
-                'delivery_batch': delivery_batch,
-                'profile_id': profile_id,
-                'profile_username': profile_username,
+                'product_mention_count': 1 if product_mentioned else 0,
+                'brand_mention_count': 1 if brand_mentioned else 0,
                 'metadata': {
                     'knowledge_insights_count': knowledge_insights_count,
-                    'thought_leadership_enabled': knowledge_insights_count > 0
+                    'thought_leadership_enabled': knowledge_insights_count > 0,
+                    'generation_model': 'gpt-4',
+                    'profile_id': profile_id,
+                    'profile_username': profile_username,
+                    'delivery_batch': delivery_batch
                 }
             }).execute()
             

@@ -128,7 +128,7 @@ async def get_delivered_content(
         query = service.supabase.table('content_delivered')\
             .select('*')\
             .eq('client_id', client_id)\
-            .order('delivery_date', desc=True)\
+            .order('delivered_at', desc=True)\
             .limit(limit)\
             .offset(offset)
         
@@ -413,7 +413,7 @@ async def get_performance_analytics(client_id: str):
             content_response = supabase.table('content_delivered') \
                 .select('*', count='exact') \
                 .eq('client_id', client_id) \
-                .gte('delivery_date', start_date.date().isoformat()) \
+                .gte('delivered_at', start_date.isoformat()) \
                 .execute()
             total_posts = content_response.count if content_response.count else 0
             engagement_rate = (replies_received / total_posts * 100) if total_posts > 0 else 0
@@ -498,7 +498,7 @@ async def get_activity_feed(client_id: str, limit: int = 50):
             content = supabase.table('content_delivered') \
                 .select('*') \
                 .eq('client_id', client_id) \
-                .order('delivery_time', desc=True) \
+                .order('delivered_at', desc=True) \
                 .limit(limit // 2) \
                 .execute()
             
@@ -509,7 +509,7 @@ async def get_activity_feed(client_id: str, limit: int = 50):
                         'title': f"Content Ready: {item.get('content_type', 'post').upper()}",
                         'description': f"For r/{item.get('subreddit', 'unknown')}",
                         'subreddit': item.get('subreddit'),
-                        'timestamp': item.get('delivery_time')
+                        'timestamp': item.get('delivered_at')
                     })
         except:
             pass
@@ -548,13 +548,13 @@ async def get_delivery_history(
             .eq('client_id', client_id)
         
         if start_date:
-            query = query.gte('delivery_date', start_date)
+            query = query.gte('delivered_at', start_date)
         if end_date:
-            query = query.lte('delivery_date', end_date)
+            query = query.lte('delivered_at', end_date)
         if content_type and content_type != 'all':
             query = query.eq('content_type', content_type)
         
-        response = query.order('delivery_time', desc=True).limit(100).execute()
+        response = query.order('delivered_at', desc=True).limit(100).execute()
         
         return {
             "content": response.data or [],

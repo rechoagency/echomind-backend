@@ -59,9 +59,9 @@ async def get_weekly_content_report(
         else:
             # Get most recent batch (last 7 days)
             cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()
-            query = query.gte('delivery_time', cutoff_date)
+            query = query.gte('delivered_at', cutoff_date)
         
-        content_response = query.order('delivery_time', desc=True).limit(50).execute()
+        content_response = query.order('delivered_at', desc=True).limit(50).execute()
         
         if not content_response.data or len(content_response.data) == 0:
             raise HTTPException(status_code=404, detail="No content found for this period")
@@ -85,7 +85,7 @@ async def get_weekly_content_report(
                 'Brand Mentioned?': 'YES' if item.get('brand_mentioned') else 'NO',
                 'Product Mentioned?': 'YES' if item.get('product_mentioned') else 'NO',
                 'Word Count': item.get('word_count', 0),
-                'Generated At': item.get('delivery_time', ''),
+                'Generated At': item.get('delivered_at', ''),
                 'Delivery Batch': item.get('delivery_batch', 'N/A'),
                 'Reddit Post URL': f"https://reddit.com{item.get('reddit_item_id', '')}" if item.get('reddit_item_id') else 'N/A'
             })
@@ -223,9 +223,9 @@ async def get_profile_analytics(client_id: str):
         cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()
         
         content_response = supabase.table('content_delivered') \
-            .select('profile_id, profile_username, subreddit, delivery_time') \
+            .select('profile_id, profile_username, subreddit_name, delivered_at, metadata') \
             .eq('client_id', client_id) \
-            .gte('delivery_time', cutoff_date) \
+            .gte('delivered_at', cutoff_date) \
             .execute()
         
         content_by_profile = {}
@@ -241,12 +241,12 @@ async def get_profile_analytics(client_id: str):
                         }
                     
                     content_by_profile[profile_id]['posts'] += 1
-                    content_by_profile[profile_id]['subreddits'].add(item.get('subreddit'))
+                    content_by_profile[profile_id]['subreddits'].add(item.get('subreddit_name'))
                     
-                    delivery_time = item.get('delivery_time')
-                    if delivery_time:
-                        if not content_by_profile[profile_id]['last_posted'] or delivery_time > content_by_profile[profile_id]['last_posted']:
-                            content_by_profile[profile_id]['last_posted'] = delivery_time
+                    delivered_at = item.get('delivered_at')
+                    if delivered_at:
+                        if not content_by_profile[profile_id]['last_posted'] or delivered_at > content_by_profile[profile_id]['last_posted']:
+                            content_by_profile[profile_id]['last_posted'] = delivered_at
         
         # Build analytics
         analytics = []
@@ -308,7 +308,7 @@ async def get_knowledge_base_stats(client_id: str):
         content_response = supabase.table('content_delivered') \
             .select('id, metadata') \
             .eq('client_id', client_id) \
-            .gte('delivery_time', one_week_ago) \
+            .gte('delivered_at', one_week_ago) \
             .execute()
         
         posts_with_insights = 0
