@@ -52,8 +52,9 @@ def get_supabase_client_safe() -> Optional[Client]:
         return None
 
 # Create default client for backward compatibility
+# Don't fail at import time - let calling code handle it
+supabase = None
 try:
     supabase = get_supabase_client()
 except Exception as e:
-    logger.error(f"Failed to create default Supabase client: {e}")
-    supabase = None
+    logger.warning(f"Supabase client not initialized at import time: {e}. Will initialize on first use.")
