@@ -386,7 +386,7 @@ Write the response now:"""
                     similarity_threshold=0.70,  # Lower than products (0.75) for broader matching
                     max_insights=3
                 )
-                logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {[f\"{k['relevance_percentage']}%\" for k in knowledge_insights]})")
+                logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {[str(k['relevance_percentage'])+'%' for k in knowledge_insights]})")
                 
                 # STEP 7: Build prompt with special instructions AND ownership logic
                 prompt = self.build_generation_prompt(
