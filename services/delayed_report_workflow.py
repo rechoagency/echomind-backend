@@ -365,5 +365,5 @@ class DelayedReportWorkflow:
                 requests.post(slack_webhook, json={
                     "text": f"⚠️ Report generation failed for client {client_id}"
                 })
-            except Exception as e:
-                logger.warning(f"Failed to send Slack notification: {e}")
+            except:
+                pass

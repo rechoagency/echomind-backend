@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
-from utils.retry_decorator import retry_with_backoff
+from utils.retry_decorator import retry_on_openai_error
 import sys
 import os
 
@@ -45,7 +45,7 @@ class ContentGenerationWorker:
         self.supabase = supabase
         self.openai = openai_client
     
-    @retry_with_backoff(max_attempts=3, initial_delay=2.0, max_delay=10.0)
+    @retry_on_openai_error(max_attempts=3)
     def _call_openai_with_retry(self, prompt: str, max_tokens: int = 250) -> str:
         """Call OpenAI API with automatic retry and exponential backoff."""
         try:
@@ -386,7 +386,7 @@ Write the response now:"""
                     similarity_threshold=0.70,  # Lower than products (0.75) for broader matching
                     max_insights=3
                 )
-                logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {[str(k['relevance_percentage'])+'%' for k in knowledge_insights]})")
+                logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {[f\"{k['relevance_percentage']}%\" for k in knowledge_insights]})")
                 
                 # STEP 7: Build prompt with special instructions AND ownership logic
                 prompt = self.build_generation_prompt(
