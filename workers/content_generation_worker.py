@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
+from utils.retry_decorator import retry_on_openai_error
 import sys
 import os
 
@@ -30,7 +31,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# OpenAI client with timeout (30 seconds)
+openai_client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)
 
 
 class ContentGenerationWorker:
@@ -42,6 +44,24 @@ class ContentGenerationWorker:
         """Initialize the content generation worker"""
         self.supabase = supabase
         self.openai = openai_client
+    
+    @retry_on_openai_error(max_attempts=3)
+    def _call_openai_with_retry(self, prompt: str, max_tokens: int = 250) -> str:
+        """Call OpenAI API with automatic retry and exponential backoff."""
+        try:
+            response = self.openai.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "Please write the response now."}
+                ],
+                temperature=0.8,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"OpenAI API call failed: {e}")
+            raise
         self.profile_rotation = ProfileRotationService()
         self.strategy_progression = StrategyProgressionService()
         self.knowledge_matchback = KnowledgeMatchbackService(supabase)
@@ -381,18 +401,8 @@ Write the response now:"""
                     client_data=client  # Pass client data for ownership check
                 )
                 
-                # STEP 8: Generate with AI
-                response = self.openai.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": "Please write the response now."}
-                    ],
-                    temperature=0.8,
-                    max_tokens=250
-                )
-                
-                content_text = response.choices[0].message.content.strip()
+                # STEP 8: Generate with AI (with automatic retry)
+                content_text = self._call_openai_with_retry(prompt, max_tokens=250)
                 
                 # STEP 9: Log delivery to database WITH PROFILE INFO & KNOWLEDGE INSIGHTS
                 self.log_content_delivery(
