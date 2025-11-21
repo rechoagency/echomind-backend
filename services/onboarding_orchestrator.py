@@ -138,7 +138,7 @@ class OnboardingOrchestrator:
                     "onboarding_status": "error",
                     "updated_at": datetime.utcnow().isoformat()
                 }).eq("client_id", client_id).execute()
-            except:
+            except Exception as e:
                 pass
             
             return results

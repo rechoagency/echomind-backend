@@ -1,86 +1,56 @@
 """
-Retry decorator with exponential backoff for robust error handling.
-Use this for all external API calls (OpenAI, Reddit, Supabase).
+Retry decorator with exponential backoff for API calls
+Prevents permanent failures on transient errors
 """
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log
-)
+import time
 import logging
-from typing import Type, Tuple
+from functools import wraps
+from typing import Callable, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
-# Common retry decorator for external API calls
-def retry_on_api_error(
+def retry_with_backoff(
     max_attempts: int = 3,
-    min_wait: int = 2,
-    max_wait: int = 10,
+    initial_delay: float = 1.0,
+    max_delay: float = 10.0,
+    exponential_base: float = 2.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,)
 ):
     """
-    Retry decorator with exponential backoff for API calls.
+    Retry decorator with exponential backoff
     
     Args:
-        max_attempts: Maximum number of retry attempts (default: 3)
-        min_wait: Minimum wait time in seconds (default: 2)
-        max_wait: Maximum wait time in seconds (default: 10)
-        exceptions: Tuple of exception types to retry on (default: all exceptions)
-    
-    Returns:
-        Decorated function with retry logic
-    
-    Usage:
-        @retry_on_api_error(max_attempts=5, exceptions=(ConnectionError, TimeoutError))
-        def call_external_api():
-            response = requests.get(...)
-            return response
+        max_attempts: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+        exponential_base: Base for exponential backoff
+        exceptions: Tuple of exceptions to catch and retry
     """
-    return retry(
-        stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        retry=retry_if_exception_type(exceptions),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True
-    )
-
-
-# Specific retry configurations for different services
-
-def retry_on_openai_error(max_attempts: int = 3):
-    """Retry decorator specifically for OpenAI API calls."""
-    from openai import APIError, APIConnectionError, RateLimitError, Timeout
-    
-    return retry_on_api_error(
-        max_attempts=max_attempts,
-        min_wait=2,
-        max_wait=30,
-        exceptions=(APIError, APIConnectionError, RateLimitError, Timeout)
-    )
-
-
-def retry_on_reddit_error(max_attempts: int = 3):
-    """Retry decorator specifically for Reddit API calls."""
-    from prawcore.exceptions import RequestException, ResponseException, ServerError
-    
-    return retry_on_api_error(
-        max_attempts=max_attempts,
-        min_wait=5,
-        max_wait=60,  # Reddit rate limits can be aggressive
-        exceptions=(RequestException, ResponseException, ServerError)
-    )
-
-
-def retry_on_supabase_error(max_attempts: int = 3):
-    """Retry decorator specifically for Supabase calls."""
-    import requests
-    
-    return retry_on_api_error(
-        max_attempts=max_attempts,
-        min_wait=1,
-        max_wait=10,
-        exceptions=(requests.exceptions.RequestException, ConnectionError, TimeoutError)
-    )
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_exception = None
+            
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt == max_attempts:
+                        logger.error(
+                            f"{func.__name__} failed after {max_attempts} attempts: {e}"
+                        )
+                        raise
+                    
+                    logger.warning(
+                        f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * exponential_base, max_delay)
+            
+            raise last_exception
+        
+        return wrapper
+    return decorator

@@ -205,7 +205,7 @@ class DocumentProcessor:
             # Try as plain text fallback
             try:
                 return file_content.decode('utf-8', errors='ignore')
-            except:
+            except Exception as e:
                 raise ValueError(f"Could not extract text from {filename}")
     
     def _extract_from_pdf(self, file_content: bytes) -> str:

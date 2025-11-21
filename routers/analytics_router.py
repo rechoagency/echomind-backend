@@ -393,8 +393,8 @@ async def get_performance_analytics(client_id: str):
                 .gte('detected_at', start_date.isoformat()) \
                 .execute()
             brand_mention_count = brand_mentions_response.count if brand_mentions_response.count else 0
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Query failed: {e}")
         
         # Try to query auto responses
         try:
@@ -405,8 +405,8 @@ async def get_performance_analytics(client_id: str):
                 .execute()
             auto_response_count = auto_responses_response.count if auto_responses_response.count else 0
             replies_received = auto_response_count
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Query failed: {e}")
         
         # Query content delivered
         try:
@@ -469,8 +469,8 @@ async def get_activity_feed(client_id: str, limit: int = 50):
                         'timestamp': mention.get('detected_at'),
                         'sentiment': mention.get('sentiment_label', 'neutral')
                     })
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Query failed: {e}")
         
         # Try auto responses
         try:
@@ -490,8 +490,8 @@ async def get_activity_feed(client_id: str, limit: int = 50):
                         'timestamp': response.get('sent_at'),
                         'response_type': response.get('response_type')
                     })
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Query failed: {e}")
         
         # Try content deliveries
         try:
@@ -511,8 +511,8 @@ async def get_activity_feed(client_id: str, limit: int = 50):
                         'subreddit': item.get('subreddit'),
                         'timestamp': item.get('delivered_at')
                     })
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Query failed: {e}")
         
         # Sort by timestamp
         activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)

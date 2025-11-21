@@ -185,7 +185,8 @@ def _get_thread_context(reddit_item_id: str) -> str:
         
         return reddit_item_id
     
-    except:
+    except Exception as e:
+        logger.warning(f"Could not extract Reddit item ID: {e}")
         return reddit_item_id
 
 
@@ -209,6 +210,7 @@ async def get_profile_analytics(client_id: str):
             .select('*') \
             .eq('client_id', client_id) \
             .eq('is_active', True) \
+            .limit(100) \
             .execute()
         
         if not profiles_response.data:

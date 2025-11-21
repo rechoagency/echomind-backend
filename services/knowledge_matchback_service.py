@@ -27,7 +27,11 @@ class KnowledgeMatchbackService:
         # Initialize OpenAI client
         openai_key = os.getenv('OPENAI_API_KEY')
         if openai_key:
-            self.openai_client = OpenAI(api_key=openai_key)
+            self.openai_client = OpenAI(
+                api_key=openai_key,
+                timeout=30.0,  # 30 second timeout to prevent hanging
+                max_retries=2  # Retry twice on failure
+            )
             logger.info("OpenAI client initialized for knowledge matchback")
         else:
             self.openai_client = None

@@ -198,7 +198,7 @@ class DocumentIngestionService:
                 # Try as plain text as fallback
                 try:
                     return file_content.decode("utf-8")
-                except:
+                except Exception as e:
                     raise ValueError(f"Unsupported file type: {file_type}")
                     
         except Exception as e:

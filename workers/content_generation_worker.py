@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
-from utils.retry_decorator import retry_on_openai_error
+from utils.retry_decorator import retry_with_backoff
 import sys
 import os
 
@@ -45,7 +45,7 @@ class ContentGenerationWorker:
         self.supabase = supabase
         self.openai = openai_client
     
-    @retry_on_openai_error(max_attempts=3)
+    @retry_with_backoff(max_attempts=3, initial_delay=2.0, max_delay=10.0)
     def _call_openai_with_retry(self, prompt: str, max_tokens: int = 250) -> str:
         """Call OpenAI API with automatic retry and exponential backoff."""
         try:

@@ -583,5 +583,5 @@ Dashboard: https://echomind-dashboard.netlify.app/dashboard.html?client_id={clie
                     section_lines.append(line)
             
             return '\n'.join(section_lines).strip()
-        except:
+        except Exception as e:
             return text[:500]  # Fallback to first 500 chars
