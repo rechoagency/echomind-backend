@@ -308,7 +308,7 @@ async def get_knowledge_base_stats(client_id: str):
         content_response = supabase.table('content_delivered') \
             .select('id, metadata') \
             .eq('client_id', client_id) \
-            .gte('delivery_date', one_week_ago) \
+            .gte('delivery_time', one_week_ago) \
             .execute()
         
         posts_with_insights = 0
