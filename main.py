@@ -180,41 +180,60 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Enhanced health check with environment validation"""
-    from supabase_client import supabase
-    
-    # Check database
-    db_status = "disconnected"
     try:
-        response = supabase.table("clients").select("id").limit(1).execute()
-        db_status = "connected"
-    except Exception as e:
-        logger.error(f"Database health check failed: {str(e)}")
-    
-    # Check environment variables
-    is_valid, env_results = EnvironmentValidator.validate_all()
-    
-    # Check services
-    from services.email_service_enhanced import email_service
-    from services.reddit_pro_service import reddit_pro_service
-    
-    return {
-        "status": "healthy" if db_status == "connected" and is_valid else "degraded",
-        "database": db_status,
-        "version": "2.2.0",
-        "environment": {
-            "valid": is_valid,
-            "missing_critical": len(env_results["missing"]),
-            "missing_optional": len(env_results["optional_missing"])
-        },
-        "services": {
-            "email": email_service.enabled,
-            "reddit_pro": reddit_pro_service.enabled
-        },
-        "scheduler": {
-            "running": scheduler.running,
-            "jobs": len(scheduler.get_jobs())
+        from supabase_client import supabase
+        
+        # Check database
+        db_status = "disconnected"
+        try:
+            response = supabase.table("clients").select("id").limit(1).execute()
+            db_status = "connected"
+        except Exception as e:
+            logger.error(f"Database health check failed: {str(e)}")
+        
+        # Check environment variables
+        is_valid, env_results = EnvironmentValidator.validate_all()
+        
+        # Check services (safely)
+        email_enabled = False
+        reddit_pro_enabled = False
+        try:
+            from services.email_service_enhanced import email_service
+            email_enabled = email_service.enabled
+        except Exception as e:
+            logger.error(f"Email service check failed: {str(e)}")
+        
+        try:
+            from services.reddit_pro_service import reddit_pro_service
+            reddit_pro_enabled = reddit_pro_service.enabled
+        except Exception as e:
+            logger.error(f"Reddit Pro service check failed: {str(e)}")
+        
+        return {
+            "status": "healthy" if db_status == "connected" and is_valid else "degraded",
+            "database": db_status,
+            "version": "2.2.0",
+            "environment": {
+                "valid": is_valid,
+                "missing_critical": len(env_results["missing"]),
+                "missing_optional": len(env_results["optional_missing"])
+            },
+            "services": {
+                "email": email_enabled,
+                "reddit_pro": reddit_pro_enabled
+            },
+            "scheduler": {
+                "running": scheduler.running,
+                "jobs": len(scheduler.get_jobs())
+            }
         }
-    }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "version": "2.2.0"
+        }
 
 # ========================================
 # DIAGNOSTIC ENDPOINTS
