@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EchoMind Backend",
     description="Social listening and content generation for Reddit",
-    version="2.2.4",
+    version="2.2.5",
     lifespan=lifespan
 )
 
@@ -186,7 +186,7 @@ async def health_check():
         # Check database
         db_status = "disconnected"
         try:
-            response = supabase.table("clients").select("id").limit(1).execute()
+            response = supabase.table("clients").select("client_id").limit(1).execute()
             db_status = "connected"
         except Exception as e:
             logger.error(f"Database health check failed: {str(e)}")
@@ -212,7 +212,7 @@ async def health_check():
         return {
             "status": "healthy" if db_status == "connected" and is_valid else "degraded",
             "database": db_status,
-            "version": "2.2.4",
+            "version": "2.2.5",
             "environment": {
                 "valid": is_valid,
                 "missing_critical": len(env_results["missing"]),
@@ -232,7 +232,7 @@ async def health_check():
         return {
             "status": "error",
             "error": str(e),
-            "version": "2.2.4"
+            "version": "2.2.5"
         }
 
 # ========================================
@@ -329,6 +329,13 @@ try:
     logger.info("✅ Loaded: Admin Router")
 except Exception as e:
     logger.error(f"❌ Failed to load admin router: {str(e)}")
+
+try:
+    from routers.documents_router import router as documents_router
+    app.include_router(documents_router, prefix="/api", tags=["documents"])
+    logger.info("✅ Loaded: Documents Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load documents router: {str(e)}")
 
 logger.info("✅ All routers loaded")
 
