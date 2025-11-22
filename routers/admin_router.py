@@ -198,6 +198,98 @@ async def send_weekly_reports_to_all():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/trigger-orchestrator/{client_id}")
+async def trigger_full_orchestrator(client_id: str, background_tasks: BackgroundTasks):
+    """
+    Manually trigger full orchestrator for a client
+    
+    This will:
+    1. Run AUTO_IDENTIFY keyword expansion
+    2. Scrape Reddit for 50-100 opportunities
+    3. Score and prioritize opportunities
+    4. Generate Intelligence Report & Sample Content
+    5. Send welcome email with reports
+    
+    Use this when:
+    - Initial onboarding failed to collect opportunities
+    - Client has 0 opportunities in database
+    - Need to re-run full data collection
+    
+    Returns immediately, processing runs in background (5-10 minutes)
+    """
+    try:
+        from services.onboarding_orchestrator import OnboardingOrchestrator
+        from services.delayed_report_workflow import DelayedReportWorkflow
+        
+        supabase = get_supabase()
+        openai_key = os.getenv("OPENAI_API_KEY")
+        
+        # Fetch client
+        client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        client = client_response.data[0]
+        company_name = client.get('company_name', 'Client')
+        
+        logger.info(f"🚀 Manual orchestrator trigger for: {company_name}")
+        
+        # Run orchestrator in background
+        async def run_full_workflow():
+            try:
+                # Step 1: Run orchestrator (scraping + scoring)
+                orchestrator = OnboardingOrchestrator(supabase, openai_key)
+                result = await orchestrator.process_client_onboarding(client_id)
+                
+                logger.info(f"✅ Orchestrator completed for {company_name}: {result}")
+                
+                # Step 2: Run delayed report workflow
+                openai_client = AsyncOpenAI(api_key=openai_key)
+                workflow = DelayedReportWorkflow(supabase, openai_client)
+                
+                notification_email = client.get('primary_contact_email') or client.get('notification_email')
+                slack_webhook = client.get('slack_webhook_url')
+                
+                await workflow.run_workflow(
+                    client_id=client_id,
+                    notification_email=notification_email,
+                    slack_webhook=slack_webhook,
+                    min_opportunities=10,
+                    timeout_seconds=600
+                )
+                
+                logger.info(f"✅ Full workflow completed for {company_name}")
+                
+            except Exception as e:
+                logger.error(f"❌ Workflow error for {company_name}: {str(e)}", exc_info=True)
+        
+        # Add to background tasks
+        background_tasks.add_task(run_full_workflow)
+        
+        return {
+            "success": True,
+            "message": f"Full orchestrator triggered for {company_name}",
+            "client_id": client_id,
+            "company_name": company_name,
+            "estimated_completion": "5-10 minutes",
+            "steps": [
+                "1. AUTO_IDENTIFY keywords",
+                "2. Scrape Reddit for opportunities",
+                "3. Score and prioritize",
+                "4. Generate Intelligence Report",
+                "5. Generate Sample Content",
+                "6. Send welcome email"
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering orchestrator: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/send-weekly-report/{client_id}")
 async def send_weekly_report_to_client(client_id: str):
     """
