@@ -7,7 +7,6 @@ import logging
 import asyncio
 from typing import List, Optional, Dict
 from datetime import datetime
-import resend
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,7 @@ class EmailServiceEnhanced:
         self.from_name = os.getenv("RESEND_FROM_NAME", "EchoMind")
         self.enabled = bool(self.api_key)
         self.initialization_error = None
+        self.resend_module = None
         
         if not self.enabled:
             logger.error("❌ CRITICAL: RESEND_API_KEY not configured")
@@ -27,9 +27,17 @@ class EmailServiceEnhanced:
             logger.error("👉 Get your API key from https://resend.com/api-keys")
         else:
             try:
+                # Import resend only when needed (lazy import)
+                import resend
+                self.resend_module = resend
                 resend.api_key = self.api_key
                 logger.info("✅ Email service initialized")
                 logger.info(f"   From: {self.from_name} <{self.from_email}>")
+            except ImportError:
+                self.initialization_error = "resend library not installed (pip install resend)"
+                self.enabled = False
+                logger.warning("⚠️ Email service: resend library not installed")
+                logger.info("   Will install on next deployment")
             except Exception as e:
                 self.initialization_error = str(e)
                 self.enabled = False
@@ -60,12 +68,19 @@ class EmailServiceEnhanced:
             Dict with send results
         """
         if not self.enabled:
-            error_msg = "Email service not configured - RESEND_API_KEY missing"
+            error_msg = "Email service not configured - RESEND_API_KEY missing or resend not installed"
             logger.error(f"❌ {error_msg}")
             return {
                 "success": False,
                 "error": error_msg,
-                "fix": "Add RESEND_API_KEY to Railway environment variables"
+                "fix": "Add RESEND_API_KEY to Railway environment variables and ensure resend is in requirements.txt"
+            }
+        
+        if not self.resend_module:
+            return {
+                "success": False,
+                "error": "Resend module not initialized",
+                "fix": "Install resend library: pip install resend"
             }
         
         for attempt in range(1, max_retries + 1):
@@ -85,8 +100,8 @@ class EmailServiceEnhanced:
                     params["attachments"] = attachments
                     logger.info(f"   Attachments: {len(attachments)} files")
                 
-                # Send email
-                response = resend.Emails.send(params)
+                # Send email using resend module
+                response = self.resend_module.Emails.send(params)
                 
                 if response.get("id"):
                     logger.info(f"✅ Email sent successfully!")
@@ -149,9 +164,9 @@ class EmailServiceEnhanced:
         
         if self.initialization_error:
             issues.append({
-                "severity": "CRITICAL",
+                "severity": "CRITICAL" if "not installed" not in self.initialization_error else "WARNING",
                 "issue": f"Email service failed to initialize: {self.initialization_error}",
-                "fix": "Check RESEND_API_KEY is valid and Resend service is accessible",
+                "fix": "Check RESEND_API_KEY is valid and resend library is installed",
                 "url": "https://resend.com/api-keys"
             })
         
@@ -165,7 +180,7 @@ class EmailServiceEnhanced:
         
         return {
             "enabled": self.enabled,
-            "configured": len(issues) == 0,
+            "configured": len([i for i in issues if i["severity"] == "CRITICAL"]) == 0,
             "issues": issues,
             "from_email": self.from_email,
             "from_name": self.from_name
@@ -181,10 +196,11 @@ class EmailServiceEnhanced:
                 "3. Create a new API key",
                 "4. Copy the API key (starts with 're_')",
                 "5. Add to Railway: RESEND_API_KEY=<your_key>",
-                "6. (Optional) Add custom domain in Resend",
-                "7. (Optional) Set RESEND_FROM_EMAIL=noreply@yourdomain.com",
-                "8. Redeploy backend",
-                "9. Test email delivery with dummy client"
+                "6. Ensure resend is in requirements.txt",
+                "7. (Optional) Add custom domain in Resend",
+                "8. (Optional) Set RESEND_FROM_EMAIL=noreply@yourdomain.com",
+                "9. Redeploy backend",
+                "10. Test email delivery with dummy client"
             ],
             "free_tier": "100 emails/day (sufficient for testing)",
             "paid_tier": "$0.001 per email (very affordable)"
