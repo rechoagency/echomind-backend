@@ -1,6 +1,6 @@
 """
-Brand Mention Monitor Worker - Simplified for existing schema
-Scans target_subreddits and target_keywords from clients table
+Brand Mention Monitor Worker - FIXED VERSION
+Scans Reddit and creates opportunities directly (not brand_mentions)
 """
 
 import os
@@ -9,6 +9,7 @@ from openai import OpenAI
 from datetime import datetime, timedelta
 from supabase_client import get_supabase_client
 import json
+import uuid
 
 # Initialize clients
 supabase = get_supabase_client()
@@ -31,20 +32,23 @@ def get_active_clients():
     return response.data
 
 
-def scan_for_mentions(client_id, company_name, subreddits, keywords):
-    """Scan subreddits for brand mentions"""
-    mentions_found = []
+def scan_for_opportunities(client_id, company_name, subreddits, keywords):
+    """Scan subreddits and create opportunities"""
+    opportunities_found = []
     
-    print(f"  Scanning {len(subreddits)} subreddits for mentions of '{company_name}'...")
+    print(f"  Scanning {len(subreddits)} subreddits for opportunities...")
     
-    for subreddit_name in subreddits[:5]:  # Limit to 5 subreddits for now
+    for subreddit_name in subreddits[:10]:  # Process up to 10 subreddits
+        # Remove 'r/' prefix if present
+        subreddit_name = subreddit_name.replace('r/', '')
+        
         try:
             subreddit = reddit.subreddit(subreddit_name)
             
-            # Get recent posts (last 24 hours)
-            for post in subreddit.new(limit=50):
+            # Get recent posts (last 48 hours)
+            for post in subreddit.new(limit=100):
                 post_age_hours = (datetime.utcnow().timestamp() - post.created_utc) / 3600
-                if post_age_hours > 24:
+                if post_age_hours > 48:
                     continue
                 
                 # Check if any keyword appears in title or body
@@ -52,88 +56,71 @@ def scan_for_mentions(client_id, company_name, subreddits, keywords):
                 matched_keywords = [kw for kw in keywords if kw.lower() in text]
                 
                 if matched_keywords:
-                    # Analyze sentiment with GPT-4
-                    sentiment = analyze_sentiment(text, company_name)
-                    
-                    mention = {
+                    # Create opportunity directly
+                    opportunity = {
+                        "opportunity_id": str(uuid.uuid4()),
                         "client_id": client_id,
                         "reddit_post_id": post.id,
                         "subreddit": subreddit_name,
-                        "author": str(post.author) if post.author else "[deleted]",
-                        "title": post.title,
-                        "body": post.selftext[:500],
-                        "url": f"https://reddit.com{post.permalink}",
-                        "sentiment": sentiment,
+                        "subreddit_members": subreddit.subscribers,
+                        "author_username": str(post.author) if post.author else "[deleted]",
+                        "thread_title": post.title,
+                        "thread_url": f"https://reddit.com{post.permalink}",
+                        "original_post_text": post.selftext[:1000],
+                        "date_posted": datetime.fromtimestamp(post.created_utc).isoformat(),
+                        "matched_keywords": json.dumps(matched_keywords),
+                        "engagement_score": min(100, (post.score + post.num_comments) // 5),  # Simple score
+                        "relevance_score": 50,  # Will be scored later by opportunity_scoring_worker
+                        "timing_score": 85 if post_age_hours < 6 else 70 if post_age_hours < 24 else 50,
                         "commercial_intent_score": calculate_intent_score(text),
-                        "matched_products": json.dumps({"keywords": matched_keywords}),
+                        "overall_priority": 0,  # Will be calculated by scoring worker
+                        "urgency_level": "MEDIUM",
+                        "content_type": "REPLY" if post.num_comments < 50 else "POST",
+                        "status": "pending",
+                        "date_found": datetime.utcnow().isoformat()
                     }
                     
-                    mentions_found.append(mention)
-                    print(f"    Found mention in r/{subreddit_name}: {sentiment}")
+                    opportunities_found.append(opportunity)
+                    print(f"    Found opportunity in r/{subreddit_name}: {post.title[:50]}...")
                     
         except Exception as e:
             print(f"    Error scanning r/{subreddit_name}: {e}")
             continue
     
-    return mentions_found
-
-
-def analyze_sentiment(text, brand_name):
-    """Analyze sentiment using GPT-4"""
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[{
-                "role": "system",
-                "content": f"Analyze the sentiment of this Reddit post about {brand_name}. Respond with ONLY one word: positive, neutral, or negative"
-            }, {
-                "role": "user",
-                "content": text[:500]
-            }],
-            max_tokens=10
-        )
-        
-        sentiment = response.choices[0].message.content.strip().lower()
-        return sentiment if sentiment in ["positive", "neutral", "negative"] else "neutral"
-        
-    except Exception as e:
-        print(f"      Sentiment analysis error: {e}")
-        return "neutral"
+    return opportunities_found
 
 
 def calculate_intent_score(text):
-    """Calculate commercial intent score (0-100)"""
-    buying_signals = [
-        "looking for", "need", "want", "buy", "purchase", "recommend",
-        "suggestion", "advice", "help", "best", "review", "worth it"
+    """Calculate commercial intent score from keywords"""
+    intent_keywords = [
+        'recommend', 'recommendation', 'best', 'which', 'should i buy',
+        'looking for', 'need help', 'suggestions', 'advice', 'worth it'
     ]
     
-    text_lower = text.lower()
-    matches = sum(1 for signal in buying_signals if signal in text_lower)
-    
-    return min(matches * 15, 100)
+    matches = sum(1 for keyword in intent_keywords if keyword in text.lower())
+    return min(100, matches * 15)
 
 
-def save_mentions(mentions):
-    """Save mentions to database"""
-    if not mentions:
+def save_opportunities(opportunities):
+    """Save opportunities to database"""
+    if not opportunities:
         return
     
     try:
-        supabase.table("brand_mentions").insert(mentions).execute()
-        print(f"  Saved {len(mentions)} mentions to database")
+        supabase.table("opportunities").insert(opportunities).execute()
+        print(f"  ✅ Saved {len(opportunities)} opportunities to database")
     except Exception as e:
-        print(f"  Error saving mentions: {e}")
+        print(f"  ❌ Error saving opportunities: {e}")
 
 
 async def monitor_all_clients():
-    """Monitor brand mentions for all clients - Called by scheduler"""
-    return run_brand_mention_monitor()
+    """Monitor for opportunities for all clients - Called by scheduler"""
+    return run_opportunity_monitor()
 
-def run_brand_mention_monitor():
-    """Main function: Check all clients for brand mentions"""
+def run_opportunity_monitor():
+    """Main function: Scan Reddit and create opportunities for all clients"""
     print("=" * 70)
-    print("BRAND MENTION MONITOR")
+    print("REDDIT OPPORTUNITY MONITOR (FIXED)")
     print("=" * 70)
     print(f"Running at {datetime.utcnow().isoformat()}")
     
@@ -150,18 +137,20 @@ def run_brand_mention_monitor():
             print(f"Skipping {company_name}: No subreddits or keywords configured")
             continue
         
-        print(f"📊 Checking {company_name}...")
+        print(f"📊 Scanning for {company_name}...")
         print(f"  Keywords: {', '.join(keywords[:5])}...")
         
-        mentions = scan_for_mentions(client_id, company_name, subreddits, keywords)
+        opportunities = scan_for_opportunities(client_id, company_name, subreddits, keywords)
         
-        if mentions:
-            save_mentions(mentions)
+        if opportunities:
+            save_opportunities(opportunities)
+            print(f"  ✅ Created {len(opportunities)} opportunities for {company_name}\n")
         else:
-            print(f"  No mentions found")
+            print(f"  No opportunities found for {company_name}\n")
     
-    print("\n✅ Brand mention monitoring complete")
-
+    print("=" * 70)
+    print("REDDIT OPPORTUNITY MONITOR COMPLETE")
+    print("=" * 70)
 
 if __name__ == "__main__":
-    run_brand_mention_monitor()
+    run_opportunity_monitor()
