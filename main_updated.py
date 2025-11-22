@@ -180,60 +180,41 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Enhanced health check with environment validation"""
+    from supabase_client import supabase
+    
+    # Check database
+    db_status = "disconnected"
     try:
-        from supabase_client import supabase
-        
-        # Check database
-        db_status = "disconnected"
-        try:
-            response = supabase.table("clients").select("id").limit(1).execute()
-            db_status = "connected"
-        except Exception as e:
-            logger.error(f"Database health check failed: {str(e)}")
-        
-        # Check environment variables
-        is_valid, env_results = EnvironmentValidator.validate_all()
-        
-        # Check services (safely)
-        email_enabled = False
-        reddit_pro_enabled = False
-        try:
-            from services.email_service_enhanced import email_service
-            email_enabled = email_service.enabled
-        except Exception as e:
-            logger.error(f"Email service check failed: {str(e)}")
-        
-        try:
-            from services.reddit_pro_service import reddit_pro_service
-            reddit_pro_enabled = reddit_pro_service.enabled
-        except Exception as e:
-            logger.error(f"Reddit Pro service check failed: {str(e)}")
-        
-        return {
-            "status": "healthy" if db_status == "connected" and is_valid else "degraded",
-            "database": db_status,
-            "version": "2.2.0",
-            "environment": {
-                "valid": is_valid,
-                "missing_critical": len(env_results["missing"]),
-                "missing_optional": len(env_results["optional_missing"])
-            },
-            "services": {
-                "email": email_enabled,
-                "reddit_pro": reddit_pro_enabled
-            },
-            "scheduler": {
-                "running": scheduler.running,
-                "jobs": len(scheduler.get_jobs())
-            }
-        }
+        response = supabase.table("clients").select("id").limit(1).execute()
+        db_status = "connected"
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "version": "2.2.0"
+        logger.error(f"Database health check failed: {str(e)}")
+    
+    # Check environment variables
+    is_valid, env_results = EnvironmentValidator.validate_all()
+    
+    # Check services
+    from services.email_service_enhanced import email_service
+    from services.reddit_pro_service import reddit_pro_service
+    
+    return {
+        "status": "healthy" if db_status == "connected" and is_valid else "degraded",
+        "database": db_status,
+        "version": "2.2.0",
+        "environment": {
+            "valid": is_valid,
+            "missing_critical": len(env_results["missing"]),
+            "missing_optional": len(env_results["optional_missing"])
+        },
+        "services": {
+            "email": email_service.enabled,
+            "reddit_pro": reddit_pro_service.enabled
+        },
+        "scheduler": {
+            "running": scheduler.running,
+            "jobs": len(scheduler.get_jobs())
         }
+    }
 
 # ========================================
 # DIAGNOSTIC ENDPOINTS
@@ -254,23 +235,15 @@ async def get_env_diagnostics():
 @app.get("/diagnostics/email")
 async def get_email_diagnostics():
     """Get email service diagnostics"""
-    try:
-        from services.email_service_enhanced import email_service
-        
-        config = email_service.validate_configuration()
-        setup = email_service.get_setup_instructions()
-        
-        return {
-            "configuration": config,
-            "setup_instructions": setup
-        }
-    except Exception as e:
-        logger.error(f"Email diagnostics failed: {str(e)}")
-        return {
-            "error": str(e),
-            "fix": "Check RESEND_API_KEY is set in Railway environment variables",
-            "url": "https://resend.com/api-keys"
-        }
+    from services.email_service_enhanced import email_service
+    
+    config = email_service.validate_configuration()
+    setup = email_service.get_setup_instructions()
+    
+    return {
+        "configuration": config,
+        "setup_instructions": setup
+    }
 
 @app.get("/diagnostics/reddit-pro")
 async def get_reddit_pro_diagnostics():
@@ -286,41 +259,31 @@ logger.info("📦 Loading routers...")
 
 try:
     from client_onboarding_router import router as onboarding_router
-    # Router already has /api/client-onboarding prefix, don't add it again
-    app.include_router(onboarding_router, tags=["onboarding"])
+    app.include_router(onboarding_router, prefix="/api/client-onboarding", tags=["onboarding"])
     logger.info("✅ Loaded: Client Onboarding Router")
 except Exception as e:
     logger.error(f"❌ Failed to load onboarding router: {str(e)}")
 
 try:
     from routers.clients_router import router as clients_router
-    app.include_router(clients_router, prefix="/api", tags=["clients"])
+    app.include_router(clients_router, prefix="/api/clients", tags=["clients"])
     logger.info("✅ Loaded: Clients Router")
 except Exception as e:
     logger.error(f"❌ Failed to load clients router: {str(e)}")
 
 try:
     from routers.reports_router import router as reports_router
-    app.include_router(reports_router, prefix="/api", tags=["reports"])
+    app.include_router(reports_router, prefix="/api/reports", tags=["reports"])
     logger.info("✅ Loaded: Reports Router")
 except Exception as e:
     logger.error(f"❌ Failed to load reports router: {str(e)}")
 
 try:
     from metrics_api_router import router as metrics_router
-    # Router already has /api/metrics prefix
-    app.include_router(metrics_router, tags=["metrics"])
+    app.include_router(metrics_router, prefix="/api/metrics", tags=["metrics"])
     logger.info("✅ Loaded: Metrics Router")
 except Exception as e:
     logger.error(f"❌ Failed to load metrics router: {str(e)}")
-
-try:
-    from routers.dashboard_router import router as dashboard_router
-    # Router already has /api/dashboard prefix
-    app.include_router(dashboard_router, tags=["dashboard"])
-    logger.info("✅ Loaded: Dashboard Router")
-except Exception as e:
-    logger.error(f"❌ Failed to load dashboard router: {str(e)}")
 
 logger.info("✅ All routers loaded")
 
@@ -329,7 +292,7 @@ logger.info("✅ All routers loaded")
 async def root():
     return {
         "message": "EchoMind Backend API",
-        "version": "2.2.2",
+        "version": "2.2.0",
         "status": "running",
         "docs": "/docs",
         "health": "/health",
@@ -337,11 +300,6 @@ async def root():
             "environment": "/diagnostics/env",
             "email": "/diagnostics/email",
             "reddit_pro": "/diagnostics/reddit-pro"
-        },
-        "main_endpoints": {
-            "onboard_client": "POST /api/client-onboarding/onboard",
-            "list_clients": "GET /api/clients",
-            "client_reports": "GET /api/reports/{client_id}/weekly-content"
         }
     }
 
