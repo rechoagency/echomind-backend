@@ -24,7 +24,7 @@ class DelayedReportWorkflow:
         client_id: str,
         notification_email: str,
         slack_webhook: Optional[str] = None,
-        min_opportunities: int = 50,
+        min_opportunities: int = 10,
         timeout_seconds: int = 600
     ):
         """
@@ -73,7 +73,7 @@ class DelayedReportWorkflow:
             # STEP 4: Send welcome email with reports
             logger.info(f"📧 Sending welcome email to {notification_email}...")
             
-            client = self.supabase.table("clients").select("*").eq("id", client_id).single().execute().data
+            client = self.supabase.table("clients").select("*").eq("client_id", client_id).single().execute().data
             company_name = client.get('company_name', 'Client')
             
             result = await self._send_welcome_email_with_reports(
