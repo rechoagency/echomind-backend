@@ -235,15 +235,23 @@ async def get_env_diagnostics():
 @app.get("/diagnostics/email")
 async def get_email_diagnostics():
     """Get email service diagnostics"""
-    from services.email_service_enhanced import email_service
-    
-    config = email_service.validate_configuration()
-    setup = email_service.get_setup_instructions()
-    
-    return {
-        "configuration": config,
-        "setup_instructions": setup
-    }
+    try:
+        from services.email_service_enhanced import email_service
+        
+        config = email_service.validate_configuration()
+        setup = email_service.get_setup_instructions()
+        
+        return {
+            "configuration": config,
+            "setup_instructions": setup
+        }
+    except Exception as e:
+        logger.error(f"Email diagnostics failed: {str(e)}")
+        return {
+            "error": str(e),
+            "fix": "Check RESEND_API_KEY is set in Railway environment variables",
+            "url": "https://resend.com/api-keys"
+        }
 
 @app.get("/diagnostics/reddit-pro")
 async def get_reddit_pro_diagnostics():

@@ -17,15 +17,24 @@ class EmailServiceEnhanced:
     def __init__(self):
         self.api_key = os.getenv("RESEND_API_KEY")
         self.from_email = os.getenv("RESEND_FROM_EMAIL", "onboarding@echomind.ai")
+        self.from_name = os.getenv("RESEND_FROM_NAME", "EchoMind")
         self.enabled = bool(self.api_key)
+        self.initialization_error = None
         
         if not self.enabled:
             logger.error("❌ CRITICAL: RESEND_API_KEY not configured")
             logger.error("👉 Add RESEND_API_KEY to Railway environment variables")
             logger.error("👉 Get your API key from https://resend.com/api-keys")
         else:
-            resend.api_key = self.api_key
-            logger.info("✅ Email service initialized")
+            try:
+                resend.api_key = self.api_key
+                logger.info("✅ Email service initialized")
+                logger.info(f"   From: {self.from_name} <{self.from_email}>")
+            except Exception as e:
+                self.initialization_error = str(e)
+                self.enabled = False
+                logger.error(f"❌ Email service initialization failed: {str(e)}")
+                logger.error("   Check RESEND_API_KEY is valid")
     
     async def send_with_retry(
         self,
@@ -138,10 +147,18 @@ class EmailServiceEnhanced:
                 "url": "https://resend.com/api-keys"
             })
         
+        if self.initialization_error:
+            issues.append({
+                "severity": "CRITICAL",
+                "issue": f"Email service failed to initialize: {self.initialization_error}",
+                "fix": "Check RESEND_API_KEY is valid and Resend service is accessible",
+                "url": "https://resend.com/api-keys"
+            })
+        
         if not os.getenv("RESEND_FROM_EMAIL"):
             issues.append({
                 "severity": "WARNING",
-                "issue": "RESEND_FROM_EMAIL not set (using default)",
+                "issue": "RESEND_FROM_EMAIL not set (using default: onboarding@echomind.ai)",
                 "fix": "Set RESEND_FROM_EMAIL to your verified domain email",
                 "url": "https://resend.com/domains"
             })
@@ -150,7 +167,8 @@ class EmailServiceEnhanced:
             "enabled": self.enabled,
             "configured": len(issues) == 0,
             "issues": issues,
-            "from_email": self.from_email
+            "from_email": self.from_email,
+            "from_name": self.from_name
         }
     
     def get_setup_instructions(self) -> Dict:
