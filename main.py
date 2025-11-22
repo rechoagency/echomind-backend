@@ -15,7 +15,6 @@ from metrics_api_router import router as metrics_router
 from routers.dashboard_router import router as dashboard_router
 from routers.admin_router import router as admin_router
 from routers.option_b_router import router as option_b_router
-from routers.client_settings_router_CORRECTED import router as client_settings_router
 from routers.analytics_router import router as analytics_router
 from routers.clients_router import router as clients_router
 from routers.documents_router import router as documents_router
@@ -45,7 +44,6 @@ app.add_middleware(
 app.include_router(onboarding_router, tags=["Client Onboarding"])
 app.include_router(metrics_router, tags=["Metrics"])
 app.include_router(dashboard_router, tags=["Dashboard"])
-app.include_router(client_settings_router, prefix="/api", tags=["Client Settings"])
 app.include_router(clients_router, prefix="/api", tags=["Clients"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
 app.include_router(debug_router, prefix="/api", tags=["Debug"])
