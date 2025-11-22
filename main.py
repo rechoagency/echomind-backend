@@ -286,28 +286,30 @@ logger.info("📦 Loading routers...")
 
 try:
     from client_onboarding_router import router as onboarding_router
-    app.include_router(onboarding_router, prefix="/api/client-onboarding", tags=["onboarding"])
+    # Router already has /api/client-onboarding prefix, don't add it again
+    app.include_router(onboarding_router, tags=["onboarding"])
     logger.info("✅ Loaded: Client Onboarding Router")
 except Exception as e:
     logger.error(f"❌ Failed to load onboarding router: {str(e)}")
 
 try:
     from routers.clients_router import router as clients_router
-    app.include_router(clients_router, prefix="/api/clients", tags=["clients"])
+    app.include_router(clients_router, prefix="/api", tags=["clients"])
     logger.info("✅ Loaded: Clients Router")
 except Exception as e:
     logger.error(f"❌ Failed to load clients router: {str(e)}")
 
 try:
     from routers.reports_router import router as reports_router
-    app.include_router(reports_router, prefix="/api/reports", tags=["reports"])
+    app.include_router(reports_router, prefix="/api", tags=["reports"])
     logger.info("✅ Loaded: Reports Router")
 except Exception as e:
     logger.error(f"❌ Failed to load reports router: {str(e)}")
 
 try:
     from metrics_api_router import router as metrics_router
-    app.include_router(metrics_router, prefix="/api/metrics", tags=["metrics"])
+    # Router already has /api/metrics prefix
+    app.include_router(metrics_router, tags=["metrics"])
     logger.info("✅ Loaded: Metrics Router")
 except Exception as e:
     logger.error(f"❌ Failed to load metrics router: {str(e)}")
@@ -319,7 +321,7 @@ logger.info("✅ All routers loaded")
 async def root():
     return {
         "message": "EchoMind Backend API",
-        "version": "2.2.0",
+        "version": "2.2.1",
         "status": "running",
         "docs": "/docs",
         "health": "/health",
@@ -327,6 +329,11 @@ async def root():
             "environment": "/diagnostics/env",
             "email": "/diagnostics/email",
             "reddit_pro": "/diagnostics/reddit-pro"
+        },
+        "main_endpoints": {
+            "onboard_client": "POST /api/client-onboarding/onboard",
+            "list_clients": "GET /api/clients",
+            "client_reports": "GET /api/reports/{client_id}/weekly-content"
         }
     }
 
