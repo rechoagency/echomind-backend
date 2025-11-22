@@ -74,7 +74,7 @@ def health_check() -> bool:
     try:
         client = get_supabase_client()
         # Simple query to test connection
-        client.table('clients').select('id').limit(1).execute()
+        client.table('clients').select('client_id').limit(1).execute()
         return True
     except Exception as e:
         logger.error(f"Supabase health check failed: {e}")
