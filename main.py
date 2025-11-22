@@ -316,8 +316,7 @@ except Exception as e:
 
 try:
     from routers.dashboard_router import router as dashboard_router
-    # Router already has /api/dashboard prefix
-    app.include_router(dashboard_router, tags=["dashboard"])
+    app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
     logger.info("✅ Loaded: Dashboard Router")
 except Exception as e:
     logger.error(f"❌ Failed to load dashboard router: {str(e)}")

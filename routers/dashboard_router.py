@@ -13,6 +13,7 @@ router = APIRouter()
 
 
 @router.get("/dashboard/client/{client_id}")
+# NOTE: main.py adds /api prefix, so this becomes /api/dashboard/client/{client_id}
 async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
     """
     Client Dashboard - Shows performance metrics for a specific client
