@@ -3,7 +3,7 @@ Admin Router - Client Management Operations
 Includes: Delete clients with confirmation, bulk operations
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List
 import logging
@@ -233,4 +233,62 @@ async def send_weekly_report_to_client(client_id: str):
         raise
     except Exception as e:
         logger.error(f"Error sending weekly report: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/regenerate-reports/{client_id}")
+async def regenerate_onboarding_reports(client_id: str, background_tasks: BackgroundTasks):
+    """
+    Regenerate Intelligence Report and Sample Content for a client
+    
+    Use this when:
+    - Initial onboarding workflow failed
+    - Client needs updated reports
+    - Testing report generation
+    
+    Returns immediately, reports generated in background
+    """
+    try:
+        from fastapi import BackgroundTasks
+        supabase = get_supabase()
+        
+        # Verify client exists
+        client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
+        
+        client = client_response.data[0]
+        company_name = client.get("company_name")
+        notification_email = client.get("primary_contact_email") or client.get("notification_email")
+        slack_webhook = client.get("slack_webhook_url")
+        
+        if not notification_email:
+            raise HTTPException(status_code=400, detail="Client has no email address for reports")
+        
+        logger.info(f"🔄 Regenerating reports for: {company_name} ({client_id})")
+        
+        # Trigger delayed report workflow in background
+        from client_onboarding_router import run_onboarding_with_delayed_reports
+        
+        background_tasks.add_task(
+            run_onboarding_with_delayed_reports,
+            client_id,
+            notification_email,
+            slack_webhook
+        )
+        
+        return {
+            "success": True,
+            "message": f"Report generation started for {company_name}",
+            "client_id": client_id,
+            "email": notification_email,
+            "estimated_time": "5-10 minutes",
+            "note": "You will receive Intelligence Report and Sample Content via email"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerating reports: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
