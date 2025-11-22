@@ -322,6 +322,14 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to load dashboard router: {str(e)}")
 
+try:
+    from routers.admin_router import router as admin_router
+    # Router already has /api/admin prefix
+    app.include_router(admin_router, tags=["admin"])
+    logger.info("✅ Loaded: Admin Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load admin router: {str(e)}")
+
 logger.info("✅ All routers loaded")
 
 # Root endpoint
