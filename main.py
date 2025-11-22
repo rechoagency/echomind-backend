@@ -1,228 +1,308 @@
-# Deployment: 1763568715
-# EchoMind Backend - Complete System
+"""
+EchoMind Backend - Enhanced with Environment Validation
+"""
+import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import os
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
 
-# Load environment variables
-load_dotenv()
+# Import environment validator FIRST
+from utils.env_validator import EnvironmentValidator
 
-# Import routers
-from client_onboarding_router import router as onboarding_router
-from metrics_api_router import router as metrics_router
-from routers.dashboard_router import router as dashboard_router
-from routers.admin_router import router as admin_router
-from routers.option_b_router import router as option_b_router
-from routers.analytics_router import router as analytics_router
-from routers.clients_router import router as clients_router
-from routers.documents_router import router as documents_router
-from routers.debug_router import router as debug_router
-from routers.reports_router import router as reports_router
-from routers.migration_router import router as migration_router
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Import Supabase client for startup checks
-from supabase_client import supabase
+# Global scheduler
+scheduler = AsyncIOScheduler(timezone=pytz.timezone('US/Eastern'))
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    
+    # ========================================
+    # STEP 1: VALIDATE ENVIRONMENT VARIABLES
+    # ========================================
+    logger.info("=" * 80)
+    logger.info("🚀 EchoMind Backend Starting...")
+    logger.info("=" * 80)
+    
+    try:
+        # Validate environment - will exit if critical vars missing
+        logger.info("\n🔍 Validating environment variables...")
+        validation_report = EnvironmentValidator.get_validation_report()
+        print(validation_report)
+        
+        is_valid, results = EnvironmentValidator.validate_all()
+        
+        if not is_valid:
+            logger.critical("❌ CANNOT START: Missing critical environment variables")
+            logger.critical("👉 Add missing variables to Railway and redeploy")
+            raise SystemExit(1)
+        
+        logger.info("✅ Environment validation passed")
+        
+    except Exception as e:
+        logger.critical(f"❌ Environment validation failed: {str(e)}")
+        raise
+    
+    # ========================================
+    # STEP 2: INITIALIZE SERVICES
+    # ========================================
+    logger.info("\n🔧 Initializing services...")
+    
+    try:
+        # Test enhanced services
+        from services.email_service_enhanced import email_service
+        from services.reddit_pro_service import reddit_pro_service
+        
+        # Validate email service
+        email_config = email_service.validate_configuration()
+        if not email_config["enabled"]:
+            logger.warning("⚠️ Email service not configured - emails will NOT be sent")
+            for issue in email_config["issues"]:
+                logger.warning(f"   {issue['severity']}: {issue['issue']}")
+        
+        # Check Reddit Pro
+        if not reddit_pro_service.enabled:
+            logger.info("ℹ️ Reddit Pro not configured - using standard Reddit API")
+        
+        logger.info("✅ Services initialized")
+        
+    except Exception as e:
+        logger.error(f"⚠️ Service initialization warning: {str(e)}")
+        # Continue startup even if optional services fail
+    
+    # ========================================
+    # STEP 3: SCHEDULE WORKERS
+    # ========================================
+    logger.info("\n📅 Scheduling background workers...")
+    
+    try:
+        # Import workers
+        from workers import (
+            weekly_report_generator,
+            brand_mention_monitor,
+            auto_reply_generator
+        )
+        
+        # Schedule weekly reports (Monday & Thursday, 7am EST)
+        if weekly_report_generator:
+            scheduler.add_job(
+                weekly_report_generator.generate_all_weekly_reports,
+                trigger=CronTrigger(
+                    day_of_week='mon,thu',
+                    hour=7,
+                    minute=0,
+                    timezone=pytz.timezone('US/Eastern')
+                ),
+                id='weekly_reports',
+                name='Weekly Reports: Monday & Thursday at 7am EST',
+                replace_existing=True
+            )
+            logger.info("✅ Scheduled: Weekly reports (Mon/Thu 7am EST)")
+        
+        # Schedule brand mention monitoring (Daily, 9am EST)
+        if brand_mention_monitor:
+            scheduler.add_job(
+                brand_mention_monitor.monitor_all_clients,
+                trigger=CronTrigger(
+                    hour=9,
+                    minute=0,
+                    timezone=pytz.timezone('US/Eastern')
+                ),
+                id='brand_mentions',
+                name='Brand Mention Monitor: Daily at 9am EST',
+                replace_existing=True
+            )
+            logger.info("✅ Scheduled: Brand mentions (Daily 9am EST)")
+        
+        # Schedule auto-reply generation (Every 6 hours)
+        if auto_reply_generator:
+            scheduler.add_job(
+                auto_reply_generator.generate_all_auto_replies,
+                trigger=CronTrigger(
+                    hour='*/6',
+                    timezone=pytz.timezone('UTC')
+                ),
+                id='auto_replies',
+                name='Auto-Reply Generator: Every 6 hours',
+                replace_existing=True
+            )
+            logger.info("✅ Scheduled: Auto-replies (Every 6 hours)")
+        
+        # Start scheduler
+        scheduler.start()
+        logger.info("✅ Background worker scheduler started")
+        
+    except Exception as e:
+        logger.error(f"❌ Worker scheduling failed: {str(e)}")
+        logger.error("   Workers will not run automatically")
+        # Continue startup - workers are important but not critical
+    
+    logger.info("\n" + "=" * 80)
+    logger.info("✅ EchoMind Backend Ready")
+    logger.info("=" * 80)
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Shutting down scheduler...")
+    scheduler.shutdown()
+    logger.info("✅ Shutdown complete")
+
+# Create FastAPI app
 app = FastAPI(
-    title="EchoMind Backend API",
-    description="Reddit Marketing Automation SaaS Platform - Complete System",
-    version="2.0.0"
+    title="EchoMind Backend",
+    description="Social listening and content generation for Reddit",
+    version="2.2.0",
+    lifespan=lifespan
 )
 
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific domains
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(onboarding_router, tags=["Client Onboarding"])
-app.include_router(metrics_router, tags=["Metrics"])
-app.include_router(dashboard_router, tags=["Dashboard"])
-app.include_router(clients_router, prefix="/api", tags=["Clients"])
-app.include_router(documents_router, prefix="/api", tags=["Documents"])
-app.include_router(debug_router, prefix="/api", tags=["Debug"])
-app.include_router(analytics_router, prefix="/api", tags=["Analytics"])
-app.include_router(reports_router, prefix="/api", tags=["Reports"])
-app.include_router(migration_router, prefix="/api", tags=["Migrations"])
-app.include_router(admin_router, tags=["Admin"])
-app.include_router(option_b_router, tags=["Option B Workers"])
-
-@app.on_event("startup")
-async def startup_event():
-    """Verify connections on startup and initialize scheduler"""
-    print("🚀 EchoMind Backend Starting...")
-    print("   Version: 2.0.0 - Complete System")
-    
-    # Test Supabase connection
-    try:
-        supabase_url = os.getenv("SUPABASE_URL")
-        print(f"✅ Environment loaded: {supabase_url[:30]}...")
-        
-        # Simple query to verify connection
-        result = supabase.table("clients").select("client_id").limit(1).execute()
-        print("✅ Supabase connection established")
-        print("✅ All systems ready")
-    except Exception as e:
-        print(f"⚠️ Supabase connection warning: {e}")
-    
-    # Initialize weekly report scheduler (optional - app works without it)
-    try:
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-        from apscheduler.triggers.cron import CronTrigger
-        import asyncio
-        
-        # Try to import workers (may not exist in minimal deployment)
-        try:
-            from workers.weekly_report_generator import send_weekly_reports
-            has_weekly_reports = True
-        except ImportError:
-            has_weekly_reports = False
-            print("⚠️ weekly_report_generator not available")
-        
-        try:
-            from workers.brand_mention_monitor import run_brand_mention_monitor
-            has_brand_monitor = True
-        except ImportError:
-            has_brand_monitor = False
-            print("⚠️ brand_mention_monitor not available")
-        
-        try:
-            from workers.auto_reply_generator import run_auto_reply_generator
-            has_auto_reply = True
-        except ImportError:
-            has_auto_reply = False
-            print("⚠️ auto_reply_generator not available")
-        
-        # Only initialize scheduler if at least one worker is available
-        if has_weekly_reports or has_brand_monitor or has_auto_reply:
-            scheduler = AsyncIOScheduler()
-            
-            # Weekly Reports: Monday & Thursday at 7am EST (12pm UTC)
-            if has_weekly_reports:
-                scheduler.add_job(
-                    func=lambda: asyncio.create_task(send_weekly_reports()),
-                    trigger=CronTrigger(
-                        day_of_week='mon,thu',
-                        hour=12,  # 12pm UTC = 7am EST
-                        minute=0,
-                        timezone='UTC'
-                    ),
-                    id='weekly_reports',
-                    name='Send Weekly Reports to All Clients',
-                    replace_existing=True
-                )
-                print("✅ Weekly reports scheduled (Mon/Thu 7am EST)")
-            
-            # Brand Mention Monitor: Daily at 9am EST (2pm UTC)
-            if has_brand_monitor:
-                scheduler.add_job(
-                    func=lambda: asyncio.to_thread(run_brand_mention_monitor),
-                    trigger=CronTrigger(
-                        hour=14,  # 2pm UTC = 9am EST
-                        minute=0,
-                        timezone='UTC'
-                    ),
-                    id='brand_mention_monitor',
-                    name='Daily Brand Mention Scan',
-                    replace_existing=True
-                )
-                print("✅ Brand mentions scheduled (Daily 9am EST)")
-            
-            # Auto-Reply Generator: Every 6 hours
-            if has_auto_reply:
-                scheduler.add_job(
-                    func=lambda: asyncio.to_thread(run_auto_reply_generator),
-                    trigger=CronTrigger(
-                        hour='*/6',  # Every 6 hours: 0, 6, 12, 18 UTC
-                        minute=0,
-                        timezone='UTC'
-                    ),
-                    id='auto_reply_generator',
-                    name='Auto-Reply Generation Every 6h',
-                    replace_existing=True
-                )
-                print("✅ Auto-replies scheduled (Every 6 hours)")
-            
-            scheduler.start()
-            app.state.scheduler = scheduler
-            print("✅ Scheduler initialized successfully")
-        else:
-            print("⚠️ No workers available - scheduler not initialized")
-            print("   API endpoints will still work normally")
-        
-    except Exception as e:
-        print(f"⚠️ Scheduler initialization error: {e}")
-        print("   API endpoints will still work normally")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    print("👋 EchoMind Backend Shutting Down...")
-    
-    # Shutdown scheduler if it exists
-    if hasattr(app.state, 'scheduler'):
-        app.state.scheduler.shutdown()
-        print("✅ Scheduler shut down")
-
-@app.get("/")
-async def root():
-    """Health check endpoint"""
-    return {
-        "status": "active",
-        "service": "EchoMind Backend API - Complete System",
-        "version": "2.1.0",
-        "features": [
-            "Client Onboarding",
-            "AUTO_IDENTIFY (Subreddits & Keywords)",
-            "File Upload & Vectorization",
-            "Product Matchback",
-            "Opportunity Scoring",
-            "Content Calendar Generation",
-            "Client Dashboard",
-            "Email Notifications",
-            "Weekly Reports (Mon/Thu 7am EST)"
-        ]
-    }
-
+# ========================================
+# HEALTH CHECK ENDPOINT
+# ========================================
 @app.get("/health")
 async def health_check():
-    """Detailed health check with error handling"""
-    try:
-        from supabase_client import health_check as db_health_check
-        db_healthy = db_health_check()
-    except Exception as e:
-        logger.error(f"Health check error: {e}")
-        db_healthy = False
+    """Enhanced health check with environment validation"""
+    from supabase_client import supabase
     
-    redis_status = "not_configured"
-    status = "healthy" if db_healthy else "degraded"
+    # Check database
+    db_status = "disconnected"
+    try:
+        response = supabase.table("clients").select("id").limit(1).execute()
+        db_status = "connected"
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+    
+    # Check environment variables
+    is_valid, env_results = EnvironmentValidator.validate_all()
+    
+    # Check services
+    from services.email_service_enhanced import email_service
+    from services.reddit_pro_service import reddit_pro_service
     
     return {
-        "status": status,
-        "database": "connected" if db_healthy else "disconnected",
-        "redis": redis_status,
-        "version": "2.1.1"
+        "status": "healthy" if db_status == "connected" and is_valid else "degraded",
+        "database": db_status,
+        "version": "2.2.0",
+        "environment": {
+            "valid": is_valid,
+            "missing_critical": len(env_results["missing"]),
+            "missing_optional": len(env_results["optional_missing"])
+        },
+        "services": {
+            "email": email_service.enabled,
+            "reddit_pro": reddit_pro_service.enabled
+        },
+        "scheduler": {
+            "running": scheduler.running,
+            "jobs": len(scheduler.get_jobs())
+        }
     }
 
-@app.get("/routes")
-async def list_routes():
-    """List all registered routes for debugging"""
-    routes = []
-    for route in app.routes:
-        if hasattr(route, 'methods'):
-            routes.append({
-                "path": route.path,
-                "name": route.name,
-                "methods": list(route.methods)
-            })
-    return {"total_routes": len(routes), "routes": routes}
+# ========================================
+# DIAGNOSTIC ENDPOINTS
+# ========================================
+@app.get("/diagnostics/env")
+async def get_env_diagnostics():
+    """Get environment variable diagnostics"""
+    is_valid, results = EnvironmentValidator.validate_all()
+    
+    return {
+        "valid": is_valid,
+        "present": results["present"],
+        "missing": results["missing"],
+        "optional_missing": results["optional_missing"],
+        "warnings": results["warnings"]
+    }
+
+@app.get("/diagnostics/email")
+async def get_email_diagnostics():
+    """Get email service diagnostics"""
+    from services.email_service_enhanced import email_service
+    
+    config = email_service.validate_configuration()
+    setup = email_service.get_setup_instructions()
+    
+    return {
+        "configuration": config,
+        "setup_instructions": setup
+    }
+
+@app.get("/diagnostics/reddit-pro")
+async def get_reddit_pro_diagnostics():
+    """Get Reddit Pro diagnostics"""
+    from services.reddit_pro_service import reddit_pro_service
+    
+    return reddit_pro_service.get_setup_instructions()
+
+# ========================================
+# IMPORT ROUTERS
+# ========================================
+logger.info("📦 Loading routers...")
+
+try:
+    from client_onboarding_router import router as onboarding_router
+    app.include_router(onboarding_router, prefix="/api/client-onboarding", tags=["onboarding"])
+    logger.info("✅ Loaded: Client Onboarding Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load onboarding router: {str(e)}")
+
+try:
+    from routers.clients_router import router as clients_router
+    app.include_router(clients_router, prefix="/api/clients", tags=["clients"])
+    logger.info("✅ Loaded: Clients Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load clients router: {str(e)}")
+
+try:
+    from routers.reports_router import router as reports_router
+    app.include_router(reports_router, prefix="/api/reports", tags=["reports"])
+    logger.info("✅ Loaded: Reports Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load reports router: {str(e)}")
+
+try:
+    from metrics_api_router import router as metrics_router
+    app.include_router(metrics_router, prefix="/api/metrics", tags=["metrics"])
+    logger.info("✅ Loaded: Metrics Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load metrics router: {str(e)}")
+
+logger.info("✅ All routers loaded")
+
+# Root endpoint
+@app.get("/")
+async def root():
+    return {
+        "message": "EchoMind Backend API",
+        "version": "2.2.0",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+        "diagnostics": {
+            "environment": "/diagnostics/env",
+            "email": "/diagnostics/email",
+            "reddit_pro": "/diagnostics/reddit-pro"
+        }
+    }
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
