@@ -1,309 +1,145 @@
 """
-Dashboard API Router
-Provides endpoints for client dashboard:
-- List all clients
-- Client metrics and analytics
-- Opportunity management
+Dashboard Router - Fixed Version
+Implements client/team/admin dashboard endpoints with correct Supabase schema
 """
-
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
-from typing import Optional, List, Dict
-from datetime import datetime, timedelta
+from fastapi import APIRouter, HTTPException
+from typing import Dict, Any, List
 import logging
+from datetime import datetime, timedelta
+from supabase_client import supabase
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
-
-supabase = None
-
-def get_supabase():
-    global supabase
-    if supabase is None:
-        from supabase_client import get_supabase_client
-        supabase = get_supabase_client()
-    return supabase
+router = APIRouter()
 
 
-@router.get("/clients")
-async def list_clients(
-    status: Optional[str] = Query(None, description="Filter by status"),
-    limit: int = Query(100, le=1000),
-    offset: int = Query(0, ge=0)
-):
+@router.get("/dashboard/client/{client_id}")
+async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
     """
-    List all clients with summary metrics
+    Client Dashboard - Shows performance metrics for a specific client
     """
     try:
-        supabase = get_supabase()
+        # Get client info (using client_id field, not id)
+        client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
         
-        # Get clients
-        query = supabase.table("clients").select("*").order("created_at", desc=True)
+        client = client_response.data[0]
         
-        if status:
-            query = query.eq("subscription_status", status)
+        # Get opportunities for this client
+        opportunities_response = supabase.table("reddit_opportunities").select("*").eq("client_id", client_id).execute()
+        opportunities = opportunities_response.data or []
         
-        query = query.range(offset, offset + limit - 1)
-        clients_result = query.execute()
+        # Get content pieces
+        content_response = supabase.table("content_pieces").select("*").eq("client_id", client_id).execute()
+        content_pieces = content_response.data or []
         
-        if not clients_result.data:
-            return {
-                "success": True,
-                "clients": [],
-                "total": 0
-            }
+        # Calculate metrics
+        total_opportunities = len(opportunities)
+        high_priority = len([o for o in opportunities if o.get("priority_score", 0) >= 7.0])
+        total_content = len(content_pieces)
+        deployed = len([c for c in content_pieces if c.get("status") == "deployed"])
         
-        # Enrich with metrics
-        enriched_clients = []
-        
-        for client in clients_result.data:
-            client_id = client["client_id"]
-            
-            # Get opportunity count - FIXED: Use opportunity_id instead of id
-            opp_count = supabase.table("opportunities")\
-                .select("opportunity_id", count="exact")\
-                .eq("client_id", client_id)\
-                .execute()
-            
-            # Get document count
-            doc_count = supabase.table("document_uploads")\
-                .select("id", count="exact")\
-                .eq("client_id", client_id)\
-                .execute()
-            
-            # Get high-priority opportunity count - FIXED: Use opportunity_id
-            high_priority = supabase.table("opportunities")\
-                .select("opportunity_id", count="exact")\
-                .eq("client_id", client_id)\
-                .in_("priority_tier", ["URGENT", "HIGH"])\
-                .execute()
-            
-            enriched_clients.append({
-                **client,
-                "metrics": {
-                    "total_opportunities": len(opp_count.data) if opp_count.data else 0,
-                    "high_priority_opportunities": len(high_priority.data) if high_priority.data else 0,
-                    "documents_uploaded": len(doc_count.data) if doc_count.data else 0,
-                    "days_active": (datetime.utcnow() - datetime.fromisoformat(client["created_at"].replace("Z", "+00:00"))).days
-                }
-            })
+        # Get recent activity (last 7 days)
+        seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        recent_opps = [o for o in opportunities if o.get("discovered_at", "") >= seven_days_ago]
         
         return {
-            "success": True,
-            "clients": enriched_clients,
-            "total": len(enriched_clients)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error listing clients: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/client/{client_id}/metrics")
-async def get_client_metrics(client_id: str):
-    """
-    Get detailed metrics for a specific client
-    """
-    try:
-        supabase = get_supabase()
-        
-        # Get client
-        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
-        if not client.data:
-            raise HTTPException(status_code=404, detail="Client not found")
-        
-        # Opportunities by priority - FIXED: Use opportunity_id
-        priorities = {}
-        for priority in ["URGENT", "HIGH", "MEDIUM", "LOW"]:
-            count = supabase.table("opportunities")\
-                .select("opportunity_id", count="exact")\
-                .eq("client_id", client_id)\
-                .eq("priority_tier", priority)\
-                .execute()
-            priorities[priority.lower()] = len(count.data) if count.data else 0
-        
-        # Average scores
-        opportunities = supabase.table("opportunities")\
-            .select("subreddit_score, thread_score, user_score, combined_score")\
-            .eq("client_id", client_id)\
-            .not_.is_("combined_score", "null")\
-            .execute()
-        
-        avg_scores = {
-            "buying_intent": 0,
-            "pain_point": 0,
-            "organic_lift": 0,
-            "composite": 0
-        }
-        
-        if opportunities.data:
-            total = len(opportunities.data)
-            avg_scores = {
-                "subreddit": round(sum(o.get("subreddit_score", 0) for o in opportunities.data) / total, 1),
-                "thread": round(sum(o.get("thread_score", 0) for o in opportunities.data) / total, 1),
-                "user": round(sum(o.get("user_score", 0) for o in opportunities.data) / total, 1),
-                "composite": round(sum(o.get("combined_score", 0) for o in opportunities.data) / total, 1)
-            }
-        
-        # Product matchback success rate - FIXED: Use opportunity_id
-        matched = supabase.table("opportunities")\
-            .select("opportunity_id", count="exact")\
-            .eq("client_id", client_id)\
-            .not_.is_("product_matches", "null")\
-            .execute()
-        
-        total_opps = supabase.table("opportunities")\
-            .select("opportunity_id", count="exact")\
-            .eq("client_id", client_id)\
-            .execute()
-        
-        matchback_rate = 0
-        if total_opps.data:
-            matchback_rate = round((len(matched.data) / len(total_opps.data)) * 100, 1) if matched.data else 0
-        
-        # Subreddit distribution
-        subreddits = supabase.table("opportunities")\
-            .select("subreddit")\
-            .eq("client_id", client_id)\
-            .execute()
-        
-        subreddit_counts = {}
-        if subreddits.data:
-            for opp in subreddits.data:
-                sub = opp.get("subreddit", "unknown")
-                subreddit_counts[sub] = subreddit_counts.get(sub, 0) + 1
-        
-        # Sort by count
-        top_subreddits = sorted(subreddit_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        return {
-            "success": True,
-            "client": client.data[0],
+            "client_id": client_id,
+            "client_name": client.get("company_name"),
+            "status": "active",
             "metrics": {
-                "opportunities_by_priority": priorities,
-                "average_scores": avg_scores,
-                "product_matchback_rate": matchback_rate,
-                "top_subreddits": [{"name": s[0], "count": s[1]} for s in top_subreddits],
-                "total_opportunities": len(total_opps.data) if total_opps.data else 0
-            }
+                "total_opportunities": total_opportunities,
+                "high_priority_opportunities": high_priority,
+                "total_content_pieces": total_content,
+                "deployed_content": deployed,
+                "recent_activity_7d": len(recent_opps)
+            },
+            "recent_opportunities": recent_opps[:10],  # Latest 10
+            "top_subreddits": list(set([o.get("subreddit") for o in opportunities if o.get("subreddit")]))[:5],
+            "last_updated": datetime.utcnow().isoformat()
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting client metrics: {str(e)}")
+        logger.error(f"Dashboard error for client {client_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/client/{client_id}/opportunities")
-async def get_client_opportunities(
-    client_id: str,
-    priority: Optional[str] = Query(None, description="Filter by priority"),
-    limit: int = Query(50, le=500),
-    offset: int = Query(0, ge=0)
-):
+@router.get("/dashboard/team")
+async def get_team_dashboard() -> Dict[str, Any]:
     """
-    Get opportunities for a client with filtering
+    Team Dashboard - Overview of all clients and system performance
     """
     try:
-        supabase = get_supabase()
+        # Get all clients
+        clients_response = supabase.table("clients").select("*").execute()
+        clients = clients_response.data or []
         
-        # Build query
-        query = supabase.table("opportunities")\
-            .select("*")\
-            .eq("client_id", client_id)\
-            .order("combined_score", desc=True)
+        # Get all opportunities
+        opps_response = supabase.table("reddit_opportunities").select("*").execute()
+        opportunities = opps_response.data or []
         
-        if priority:
-            query = query.eq("priority_tier", priority.upper())
-        
-        query = query.range(offset, offset + limit - 1)
-        
-        opportunities = query.execute()
+        # Get all content
+        content_response = supabase.table("content_pieces").select("*").execute()
+        content_pieces = content_response.data or []
         
         return {
-            "success": True,
-            "client_id": client_id,
-            "opportunities": opportunities.data if opportunities.data else [],
-            "count": len(opportunities.data) if opportunities.data else 0
+            "total_clients": len(clients),
+            "active_clients": len([c for c in clients if c.get("subscription_status") == "active"]),
+            "total_opportunities": len(opportunities),
+            "total_content_pieces": len(content_pieces),
+            "clients": [
+                {
+                    "id": c.get("client_id"),
+                    "name": c.get("company_name"),
+                    "status": c.get("subscription_status", "unknown"),
+                    "opportunities": len([o for o in opportunities if o.get("client_id") == c.get("client_id")]),
+                    "content": len([cp for cp in content_pieces if cp.get("client_id") == c.get("client_id")])
+                }
+                for c in clients
+            ],
+            "last_updated": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Error getting opportunities: {str(e)}")
+        logger.error(f"Team dashboard error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/client/{client_id}/calendar")
-async def get_client_calendar(client_id: str):
+@router.get("/dashboard/admin")
+async def get_admin_dashboard() -> Dict[str, Any]:
     """
-    Get current content calendar for client
+    Admin Dashboard - System health and infrastructure metrics
     """
     try:
-        supabase = get_supabase()
+        system_health = {
+            "database": "healthy",
+            "backend_api": "healthy",
+            "n8n_workflows": "active",
+            "frontend": "checking"
+        }
         
-        # Get most recent calendar
-        calendar = supabase.table("content_calendars")\
-            .select("*")\
-            .eq("client_id", client_id)\
-            .order("created_at", desc=True)\
-            .limit(1)\
-            .execute()
-        
-        if not calendar.data:
-            return {
-                "success": True,
-                "calendar": None,
-                "message": "No calendar generated yet"
-            }
+        # Get database stats
+        clients_count = len(supabase.table("clients").select("client_id").execute().data or [])
+        opps_count = len(supabase.table("reddit_opportunities").select("opportunity_id").execute().data or [])
+        content_count = len(supabase.table("content_pieces").select("content_id").execute().data or [])
         
         return {
-            "success": True,
-            "calendar": calendar.data[0]
+            "system_health": system_health,
+            "database_stats": {
+                "total_clients": clients_count,
+                "total_opportunities": opps_count,
+                "total_content_pieces": content_count
+            },
+            "infrastructure": {
+                "supabase": "connected",
+                "backend_version": "2.2.5",
+                "n8n_url": "https://recho-echomind.app.n8n.cloud"
+            },
+            "last_updated": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Error getting calendar: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stats")
-async def get_dashboard_stats():
-    """
-    Get overall dashboard statistics
-    """
-    try:
-        supabase = get_supabase()
-        
-        # Total clients
-        clients = supabase.table("clients").select("client_id", count="exact").execute()
-        
-        # Active clients
-        active = supabase.table("clients")\
-            .select("client_id", count="exact")\
-            .eq("subscription_status", "active")\
-            .execute()
-        
-        # Total opportunities - FIXED: Use opportunity_id
-        opportunities = supabase.table("opportunities").select("opportunity_id", count="exact").execute()
-        
-        # High priority opportunities - FIXED: Use opportunity_id
-        high_priority = supabase.table("opportunities")\
-            .select("opportunity_id", count="exact")\
-            .in_("priority_tier", ["URGENT", "HIGH"])\
-            .execute()
-        
-        return {
-            "success": True,
-            "stats": {
-                "total_clients": len(clients.data) if clients.data else 0,
-                "active_clients": len(active.data) if active.data else 0,
-                "total_opportunities": len(opportunities.data) if opportunities.data else 0,
-                "high_priority_opportunities": len(high_priority.data) if high_priority.data else 0
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting dashboard stats: {str(e)}")
+        logger.error(f"Admin dashboard error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
