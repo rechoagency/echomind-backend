@@ -22,7 +22,7 @@ class WeeklyReportGenerator:
         """Initialize with Supabase and OpenAI clients"""
         self.supabase: Client = create_client(
             os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # Fixed: use SERVICE_ROLE_KEY
         )
         self.openai = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         logger.info("Weekly Report Generator initialized")
@@ -441,10 +441,15 @@ Keep it actionable and business-focused. Use markdown formatting."""
 
 
 # Utility function for direct execution
-async def send_weekly_reports():
-    """Send weekly reports to all clients"""
+async def generate_all_weekly_reports():
+    """Send weekly reports to all clients - Called by scheduler"""
     generator = WeeklyReportGenerator()
     return await generator.send_reports_to_all_clients()
+
+# Backward compatibility
+async def send_weekly_reports():
+    """Send weekly reports to all clients"""
+    return await generate_all_weekly_reports()
 
 
 if __name__ == "__main__":

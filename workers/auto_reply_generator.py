@@ -122,6 +122,10 @@ def save_auto_reply(client_id, parent_post_id, reply_to_comment_id, subreddit, g
         print(f"      Error saving reply: {e}")
 
 
+async def generate_all_auto_replies():
+    """Generate auto-replies for all clients - Called by scheduler"""
+    return run_auto_reply_generator()
+
 def run_auto_reply_generator():
     """Main function: Generate replies for client posts"""
     print("=" * 70)

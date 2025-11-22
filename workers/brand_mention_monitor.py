@@ -126,6 +126,10 @@ def save_mentions(mentions):
         print(f"  Error saving mentions: {e}")
 
 
+async def monitor_all_clients():
+    """Monitor brand mentions for all clients - Called by scheduler"""
+    return run_brand_mention_monitor()
+
 def run_brand_mention_monitor():
     """Main function: Check all clients for brand mentions"""
     print("=" * 70)
