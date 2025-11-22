@@ -11,9 +11,15 @@ from typing import Dict, List, Optional
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
-from utils.retry_decorator import retry_on_openai_error
 import sys
 import os
+
+# Traffic attribution for business ROI
+try:
+    from utils.utm_builder import inject_link_naturally
+except ImportError:
+    logger.warning("utm_builder not found - traffic attribution disabled")
+    inject_link_naturally = None
 
 # Add parent directory to path for service imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -403,6 +409,18 @@ Write the response now:"""
                 
                 # STEP 8: Generate with AI (with automatic retry)
                 content_text = self._call_openai_with_retry(prompt, max_tokens=250)
+                
+                # STEP 8.5: Inject trackable link for traffic attribution (ROI TRACKING!)
+                if inject_link_naturally:
+                    website_url = client.get('website_url')
+                    if website_url and len(content_text) > 100:
+                        content_text = inject_link_naturally(
+                            content=content_text,
+                            website_url=website_url,
+                            client_id=client_id,
+                            subreddit=subreddit
+                        )
+                        logger.info(f"      💰 Traffic attribution: {website_url}")
                 
                 # STEP 9: Log delivery to database WITH PROFILE INFO & KNOWLEDGE INSIGHTS
                 self.log_content_delivery(
