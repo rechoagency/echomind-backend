@@ -26,12 +26,12 @@ async def trigger_brand_mention_monitor(background_tasks: BackgroundTasks):
     Manually trigger brand mention monitoring
     Scans all monitored subreddits for brand mentions with GPT-4 sentiment analysis
     """
-    from workers.brand_mention_monitor import run_brand_mention_monitor
+    from workers.brand_mention_monitor import run_opportunity_monitor
     
     started_at = datetime.utcnow().isoformat()
     
     # Run in background so API returns immediately
-    background_tasks.add_task(run_brand_mention_monitor)
+    background_tasks.add_task(run_opportunity_monitor)
     
     return WorkerResponse(
         status="started",
