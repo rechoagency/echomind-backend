@@ -1,6 +1,6 @@
 """
-Dashboard Router - Fixed Version
-Implements client/team/admin dashboard endpoints with correct Supabase schema
+Dashboard Router - Fixed with Correct Supabase Schema
+Implements client/team/admin dashboard endpoints
 """
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, List
@@ -13,32 +13,31 @@ router = APIRouter()
 
 
 @router.get("/dashboard/client/{client_id}")
-# NOTE: main.py adds /api prefix, so this becomes /api/dashboard/client/{client_id}
 async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
     """
     Client Dashboard - Shows performance metrics for a specific client
     """
     try:
-        # Get client info (using client_id field, not id)
+        # Get client info
         client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
         if not client_response.data:
             raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
         
         client = client_response.data[0]
         
-        # Get opportunities for this client
-        opportunities_response = supabase.table("reddit_opportunities").select("*").eq("client_id", client_id).execute()
+        # Get opportunities (using v_active_opportunities view)
+        opportunities_response = supabase.table("v_active_opportunities").select("*").eq("client_id", client_id).execute()
         opportunities = opportunities_response.data or []
         
-        # Get content pieces
-        content_response = supabase.table("content_pieces").select("*").eq("client_id", client_id).execute()
+        # Get content (using content_delivered table)
+        content_response = supabase.table("content_delivered").select("*").eq("client_id", client_id).execute()
         content_pieces = content_response.data or []
         
         # Calculate metrics
         total_opportunities = len(opportunities)
         high_priority = len([o for o in opportunities if o.get("priority_score", 0) >= 7.0])
         total_content = len(content_pieces)
-        deployed = len([c for c in content_pieces if c.get("status") == "deployed"])
+        deployed = len([c for c in content_pieces if c.get("status") == "delivered"])
         
         # Get recent activity (last 7 days)
         seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
@@ -55,7 +54,7 @@ async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
                 "deployed_content": deployed,
                 "recent_activity_7d": len(recent_opps)
             },
-            "recent_opportunities": recent_opps[:10],  # Latest 10
+            "recent_opportunities": recent_opps[:10],
             "top_subreddits": list(set([o.get("subreddit") for o in opportunities if o.get("subreddit")]))[:5],
             "last_updated": datetime.utcnow().isoformat()
         }
@@ -78,11 +77,11 @@ async def get_team_dashboard() -> Dict[str, Any]:
         clients = clients_response.data or []
         
         # Get all opportunities
-        opps_response = supabase.table("reddit_opportunities").select("*").execute()
+        opps_response = supabase.table("v_active_opportunities").select("*").execute()
         opportunities = opps_response.data or []
         
         # Get all content
-        content_response = supabase.table("content_pieces").select("*").execute()
+        content_response = supabase.table("content_delivered").select("*").execute()
         content_pieces = content_response.data or []
         
         return {
@@ -123,8 +122,8 @@ async def get_admin_dashboard() -> Dict[str, Any]:
         
         # Get database stats
         clients_count = len(supabase.table("clients").select("client_id").execute().data or [])
-        opps_count = len(supabase.table("reddit_opportunities").select("opportunity_id").execute().data or [])
-        content_count = len(supabase.table("content_pieces").select("content_id").execute().data or [])
+        opps_count = len(supabase.table("v_active_opportunities").select("*").execute().data or [])
+        content_count = len(supabase.table("content_delivered").select("*").execute().data or [])
         
         return {
             "system_health": system_health,
