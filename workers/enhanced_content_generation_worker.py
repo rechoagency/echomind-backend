@@ -123,7 +123,7 @@ class EnhancedContentGenerator:
     async def _get_voice_profile(self, subreddit: str, client_id: str) -> Dict[str, Any]:
         """Fetch voice profile from database"""
         try:
-            response = self.supabase.table("subreddit_voice_profiles")\
+            response = self.supabase.table("voice_profiles")\
                 .select("voice_profile")\
                 .eq("client_id", client_id)\
                 .eq("subreddit", subreddit)\

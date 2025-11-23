@@ -332,7 +332,7 @@ async def get_knowledge_base_stats(
             .execute()
         
         # Get chunk stats
-        chunks = supabase.table("client_knowledge_base")\
+        chunks = supabase.table("document_chunks")\
             .select("id", count="exact")\
             .eq("client_id", client_id)\
             .execute()

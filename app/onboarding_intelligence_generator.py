@@ -65,10 +65,10 @@ class OnboardingIntelligenceGenerator:
         keywords = self.supabase.table('client_keywords').select('*').eq('client_id', client_id).execute()
         
         # Products
-        products = self.supabase.table('client_products').select('*').eq('client_id', client_id).execute()
+        products = self.supabase.table('products').select('*').eq('client_id', client_id).execute()
         
         # Knowledge base
-        kb = self.supabase.table('client_knowledge_base').select('*').eq('client_id', client_id).execute()
+        kb = self.supabase.table('document_chunks').select('*').eq('client_id', client_id).execute()
         
         return {
             'client': client.data[0] if client.data else {},

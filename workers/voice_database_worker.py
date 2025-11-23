@@ -258,7 +258,7 @@ Format as valid JSON only."""}
             }
             
             # Upsert to subreddit_voice_profiles table
-            self.supabase.table("subreddit_voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+            self.supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
             
             logger.info(f"Saved voice profile for r/{subreddit_name}")
             
@@ -281,7 +281,7 @@ async def build_client_voice_database(client_id: str) -> Dict[str, Any]:
     
     # Get client's subreddits
     supabase = get_supabase_client()
-    subreddits_response = supabase.table("client_subreddits").select("subreddit_name").eq("client_id", client_id).execute()
+    subreddits_response = supabase.table("subreddits").select("subreddit_name").eq("client_id", client_id).execute()
     
     subreddits = [s['subreddit_name'] for s in subreddits_response.data]
     

@@ -128,7 +128,7 @@ class ContentGenerationWorker:
         Get voice profile for a subreddit
         """
         try:
-            profile = self.supabase.table("subreddit_voice_profiles")\
+            profile = self.supabase.table("voice_profiles")\
                 .select("*")\
                 .eq("subreddit_name", subreddit_name.lower())\
                 .eq("client_id", client_id)\

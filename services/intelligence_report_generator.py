@@ -76,7 +76,7 @@ class IntelligenceReportGenerator:
             client = client_response.data[0]
             
             # Fetch subreddits
-            subreddits_response = self.supabase.table("client_subreddits").select("*").eq("client_id", self.client_id).execute()
+            subreddits_response = self.supabase.table("subreddits").select("*").eq("client_id", self.client_id).execute()
             subreddits = subreddits_response.data if subreddits_response.data else []
             
             # Fetch keywords

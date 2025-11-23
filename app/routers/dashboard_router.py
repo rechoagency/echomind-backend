@@ -26,7 +26,7 @@ async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
         client = client_response.data[0]
         
         # Get opportunities for this client
-        opportunities_response = supabase.table("reddit_opportunities").select("*").eq("client_id", client_id).execute()
+        opportunities_response = supabase.table("opportunities").select("*").eq("client_id", client_id).execute()
         opportunities = opportunities_response.data or []
         
         # Get content pieces
@@ -77,7 +77,7 @@ async def get_team_dashboard() -> Dict[str, Any]:
         clients = clients_response.data or []
         
         # Get all opportunities
-        opps_response = supabase.table("reddit_opportunities").select("*").execute()
+        opps_response = supabase.table("opportunities").select("*").execute()
         opportunities = opps_response.data or []
         
         # Get all content
@@ -122,7 +122,7 @@ async def get_admin_dashboard() -> Dict[str, Any]:
         
         # Get database stats
         clients_count = len(supabase.table("clients").select("client_id").execute().data or [])
-        opps_count = len(supabase.table("reddit_opportunities").select("opportunity_id").execute().data or [])
+        opps_count = len(supabase.table("opportunities").select("opportunity_id").execute().data or [])
         content_count = len(supabase.table("content_pieces").select("content_id").execute().data or [])
         
         return {

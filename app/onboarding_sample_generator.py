@@ -88,10 +88,10 @@ class OnboardingSampleGenerator:
         keywords = self.supabase.table('client_keywords').select('*').eq('client_id', client_id).execute()
         
         # Products
-        products = self.supabase.table('client_products').select('*').eq('client_id', client_id).execute()
+        products = self.supabase.table('products').select('*').eq('client_id', client_id).execute()
         
         # Knowledge base
-        kb = self.supabase.table('client_knowledge_base').select('*').eq('client_id', client_id).execute()
+        kb = self.supabase.table('document_chunks').select('*').eq('client_id', client_id).execute()
         
         # Voice profiles (if available)
         voice = self.supabase.table('voice_profiles').select('*').eq('client_id', client_id).limit(5).execute()
