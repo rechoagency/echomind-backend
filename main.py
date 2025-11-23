@@ -336,6 +336,14 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to load documents router: {str(e)}")
 
+# Option B Router (Brand Monitoring, Workers)
+try:
+    from routers.option_b_router import router as option_b_router
+    app.include_router(option_b_router, tags=["Option B Workers"])
+    logger.info("✅ Loaded: Option B Router (Brand Monitoring)")
+except Exception as e:
+    logger.error(f"❌ Failed to load option_b router: {str(e)}")
+
 logger.info("✅ All routers loaded")
 
 # Root endpoint
