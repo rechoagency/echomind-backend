@@ -33,7 +33,7 @@ class SampleContentGeneratorV2:
         logger.info(f"📝 Generating Sample Content V2 for client {client_id}")
         
         # Fetch client data
-        client = self.supabase.table("clients").select("*").eq("id", client_id).single().execute().data
+        client = self.supabase.table("clients").select("*").eq("client_id", client_id).single().execute().data
         
         # Sort opportunities by priority
         top_opportunities = sorted(
