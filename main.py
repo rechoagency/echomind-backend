@@ -344,6 +344,14 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to load option_b router: {str(e)}")
 
+# Client Settings Router (Strategy Controls: Reply%, Brand%, Product%)
+try:
+    from app.routers.client_settings_router_CORRECTED import router as client_settings_router
+    app.include_router(client_settings_router, prefix="/api", tags=["client_settings"])
+    logger.info("✅ Loaded: Client Settings Router (/api/client-settings)")
+except Exception as e:
+    logger.error(f"❌ Failed to load client_settings router: {str(e)}")
+
 logger.info("✅ All routers loaded")
 
 # Root endpoint
