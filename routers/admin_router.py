@@ -386,3 +386,158 @@ async def regenerate_onboarding_reports(client_id: str, background_tasks: Backgr
     except Exception as e:
         logger.error(f"Error regenerating reports: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/trigger-reddit-scan")
+async def trigger_reddit_scan(background_tasks: BackgroundTasks, request: dict = None):
+    """
+    Manually trigger Reddit opportunity scan for all clients or specific client
+    
+    Used for:
+    - Immediate scanning after onboarding (don't wait for scheduled job)
+    - Testing Reddit monitoring
+    - Recovering from failed scans
+    
+    Body (optional):
+    {
+        "client_id": "uuid"  # If omitted, scans all active clients
+    }
+    """
+    try:
+        client_id = request.get("client_id") if request else None
+        
+        if client_id:
+            # Scan specific client
+            supabase = get_supabase()
+            client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+            
+            if not client.data:
+                raise HTTPException(status_code=404, detail="Client not found")
+            
+            client_data = client.data[0]
+            company_name = client_data.get("company_name")
+            subreddits = client_data.get("target_subreddits", [])
+            keywords = client_data.get("target_keywords", [])
+            
+            if not subreddits or not keywords:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Client {company_name} has no subreddits or keywords configured"
+                )
+            
+            logger.info(f"🔍 Triggering Reddit scan for: {company_name}")
+            logger.info(f"   Subreddits: {subreddits}")
+            logger.info(f"   Keywords: {keywords}")
+            
+            # Run scan in background
+            from workers.brand_mention_monitor import scan_for_opportunities, save_opportunities
+            
+            def scan_and_save():
+                opportunities = scan_for_opportunities(client_id, company_name, subreddits, keywords)
+                if opportunities:
+                    save_opportunities(opportunities)
+                    logger.info(f"✅ Created {len(opportunities)} opportunities for {company_name}")
+                else:
+                    logger.warning(f"⚠️  No opportunities found for {company_name}")
+                return opportunities
+            
+            background_tasks.add_task(scan_and_save)
+            
+            return {
+                "success": True,
+                "message": f"Reddit scan started for {company_name}",
+                "client_id": client_id,
+                "estimated_time": "2-3 minutes",
+                "note": "Check dashboard for opportunities"
+            }
+        
+        else:
+            # Scan all active clients
+            logger.info("🔍 Triggering Reddit scan for ALL active clients")
+            
+            from workers.brand_mention_monitor import run_opportunity_monitor
+            
+            background_tasks.add_task(run_opportunity_monitor)
+            
+            return {
+                "success": True,
+                "message": "Reddit scan started for all active clients",
+                "estimated_time": "5-10 minutes",
+                "note": "Scanning all configured subreddits"
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering Reddit scan: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/run-worker-pipeline")
+async def run_worker_pipeline(background_tasks: BackgroundTasks, request: dict):
+    """
+    Manually trigger the full worker pipeline for a client
+    
+    Pipeline stages:
+    1. Opportunity Scoring
+    2. Product Matchback
+    3. Content Generation
+    4. Voice Application
+    
+    Used for:
+    - Processing newly discovered opportunities
+    - Regenerating content after document updates
+    - Testing the full pipeline
+    
+    Body:
+    {
+        "client_id": "uuid",
+        "force_regenerate": false  # Optional: regenerate existing content
+    }
+    """
+    try:
+        client_id = request.get("client_id")
+        force_regenerate = request.get("force_regenerate", False)
+        
+        if not client_id:
+            raise HTTPException(status_code=400, detail="client_id is required")
+        
+        supabase = get_supabase()
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+        
+        company_name = client.data[0].get("company_name")
+        
+        logger.info(f"⚙️  Triggering worker pipeline for: {company_name}")
+        
+        # Run pipeline in background
+        from workers.scheduler import run_full_pipeline
+        
+        background_tasks.add_task(
+            run_full_pipeline,
+            client_id,
+            force_regenerate
+        )
+        
+        return {
+            "success": True,
+            "message": f"Worker pipeline started for {company_name}",
+            "client_id": client_id,
+            "force_regenerate": force_regenerate,
+            "estimated_time": "5-10 minutes",
+            "pipeline_stages": [
+                "Opportunity Scoring",
+                "Product Matchback",
+                "Content Generation",
+                "Voice Application"
+            ],
+            "note": "Check dashboard for content pieces after completion"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running worker pipeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
