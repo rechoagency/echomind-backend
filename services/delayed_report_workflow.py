@@ -58,17 +58,26 @@ class DelayedReportWorkflow:
             
             # STEP 2: Generate Intelligence Report
             logger.info(f"📊 Generating Intelligence Report...")
-            from services.intelligence_report_generator_v2 import IntelligenceReportGeneratorV2
+            from app.onboarding_intelligence_generator import OnboardingIntelligenceGenerator
             
-            intelligence_generator = IntelligenceReportGeneratorV2(self.supabase, self.openai)
-            intelligence_report = intelligence_generator.generate_report(client_id, opportunities)
+            intelligence_generator = OnboardingIntelligenceGenerator()
+            intelligence_path = await intelligence_generator.generate_intelligence_report(client_id)
+            
+            # Read the file into BytesIO
+            import io
+            with open(intelligence_path, 'rb') as f:
+                intelligence_report = io.BytesIO(f.read())
             
             # STEP 3: Generate Sample Content
             logger.info(f"📝 Generating Sample Content Report...")
-            from services.sample_content_generator_v2 import SampleContentGeneratorV2
+            from app.onboarding_sample_generator import OnboardingSampleGenerator
             
-            sample_generator = SampleContentGeneratorV2(self.supabase, self.openai)
-            sample_content = sample_generator.generate_report(client_id, opportunities)
+            sample_generator = OnboardingSampleGenerator()
+            sample_path = await sample_generator.generate_sample_content(client_id)
+            
+            # Read the file into BytesIO
+            with open(sample_path, 'rb') as f:
+                sample_content = io.BytesIO(f.read())
             
             # STEP 4: Send welcome email with reports
             logger.info(f"📧 Sending welcome email to {notification_email}...")
