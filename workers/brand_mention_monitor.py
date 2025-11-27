@@ -60,6 +60,7 @@ def scan_for_opportunities(client_id, company_name, subreddits, keywords):
                     opportunity = {
                         "opportunity_id": str(uuid.uuid4()),
                         "client_id": client_id,
+                        "thread_id": post.id,  # Required NOT NULL field
                         "reddit_post_id": post.id,
                         "subreddit": subreddit_name,
                         "subreddit_members": subreddit.subscribers,
