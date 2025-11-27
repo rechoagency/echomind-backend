@@ -26,6 +26,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.profile_rotation_service import ProfileRotationService
 from services.strategy_progression_service import StrategyProgressionService
 from services.knowledge_matchback_service import KnowledgeMatchbackService
+from utils.retry_decorator import retry_on_openai_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
