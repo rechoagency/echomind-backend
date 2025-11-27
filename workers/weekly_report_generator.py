@@ -250,26 +250,21 @@ Keep it actionable and business-focused. Use markdown formatting."""
                 logger.warning(f"No email for {client.get('company_name')}")
                 return {"success": False, "error": "No email address"}
             
-            response = httpx.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@echomind.ai"),
-                    "to": [email],
-                    "subject": f"📊 Weekly Reddit Report: {len(opportunities)} Opportunities - {client.get('company_name')}",
-                    "html": email_html
-                }
+            # Use the enhanced email service for proper retry and error handling
+            from services.email_service_enhanced import email_service
+
+            result = await email_service.send_with_retry(
+                to_email=email,
+                subject=f"📊 Weekly Reddit Report: {len(opportunities)} Opportunities - {client.get('company_name')}",
+                html_content=email_html
             )
-            
-            if response.status_code == 200:
+
+            if result.get("success"):
                 logger.info(f"✅ Email sent to {email}")
                 return {"success": True, "email": email}
             else:
-                logger.error(f"Resend error: {response.status_code} - {response.text}")
-                return {"success": False, "error": f"Resend error: {response.status_code}"}
+                logger.error(f"Email send error: {result.get('error')}")
+                return {"success": False, "error": result.get("error", "Unknown email error")}
                 
         except Exception as e:
             logger.error(f"Error sending report: {str(e)}")
@@ -278,40 +273,38 @@ Keep it actionable and business-focused. Use markdown formatting."""
     async def _send_no_activity_report(self, client: Dict) -> Dict[str, Any]:
         """Send report when no opportunities were found this week"""
         try:
-            import httpx
-
             # Check multiple email fields for backwards compatibility
             email = client.get("email") or client.get("primary_contact_email") or client.get("notification_email") or client.get("contact_email")
             if not email:
                 return {"success": False, "error": "No email address"}
-            
+
             html = f"""
             <!DOCTYPE html>
             <html>
             <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h1 style="color: #667eea;">📊 Weekly Report: {client.get('company_name')}</h1>
-                
+
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
                     <p style="font-size: 18px; margin: 0;"><strong>No new opportunities this week</strong></p>
                     <p style="margin: 10px 0 0 0; color: #666;">Our workers are continuously monitoring {len(client.get('subreddits', []))} subreddits. We'll notify you as soon as relevant discussions appear.</p>
                 </div>
-                
+
                 <p>This happens occasionally when:</p>
                 <ul>
                     <li>Reddit activity is low in your target subreddits</li>
                     <li>No posts matched your keyword criteria</li>
                     <li>Discussions didn't reach our relevance threshold</li>
                 </ul>
-                
+
                 <p><strong>What we're still doing:</strong></p>
                 <ul>
                     <li>✅ Monitoring 24/7 for new opportunities</li>
                     <li>✅ Analyzing posts in real-time</li>
                     <li>✅ Building your opportunity pipeline</li>
                 </ul>
-                
+
                 <a href="https://echomind-dashboard.netlify.app/dashboard.html?client_id={client.get('client_id')}" style="display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0;">View Dashboard</a>
-                
+
                 <p style="color: #666; font-size: 14px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
                     <strong>EchoMind</strong><br>
                     Next report: {(datetime.utcnow() + timedelta(days=3)).strftime('%A, %B %d')} at 7am EST
@@ -319,23 +312,18 @@ Keep it actionable and business-focused. Use markdown formatting."""
             </body>
             </html>
             """
-            
-            response = httpx.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@echomind.ai"),
-                    "to": [email],
-                    "subject": f"📊 Weekly Report: No New Opportunities - {client.get('company_name')}",
-                    "html": html
-                }
+
+            # Use the enhanced email service for proper retry and error handling
+            from services.email_service_enhanced import email_service
+
+            result = await email_service.send_with_retry(
+                to_email=email,
+                subject=f"📊 Weekly Report: No New Opportunities - {client.get('company_name')}",
+                html_content=html
             )
-            
-            return {"success": response.status_code == 200}
-            
+
+            return result
+
         except Exception as e:
             logger.error(f"Error sending no-activity report: {str(e)}")
             return {"success": False, "error": str(e)}
