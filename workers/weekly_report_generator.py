@@ -244,7 +244,8 @@ Keep it actionable and business-focused. Use markdown formatting."""
             # Send via Resend
             import httpx
             
-            email = client.get("email")
+            # Check multiple email fields for backwards compatibility
+            email = client.get("email") or client.get("primary_contact_email") or client.get("notification_email") or client.get("contact_email")
             if not email:
                 logger.warning(f"No email for {client.get('company_name')}")
                 return {"success": False, "error": "No email address"}
@@ -278,8 +279,9 @@ Keep it actionable and business-focused. Use markdown formatting."""
         """Send report when no opportunities were found this week"""
         try:
             import httpx
-            
-            email = client.get("email")
+
+            # Check multiple email fields for backwards compatibility
+            email = client.get("email") or client.get("primary_contact_email") or client.get("notification_email") or client.get("contact_email")
             if not email:
                 return {"success": False, "error": "No email address"}
             
