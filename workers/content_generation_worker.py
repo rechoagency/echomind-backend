@@ -507,6 +507,137 @@ Write the response now:"""
         except Exception as e:
             logger.error(f"      ❌ Error logging delivery: {e}")
 
+    def process_all_opportunities(
+        self,
+        client_id: Optional[str] = None,
+        regenerate: bool = False,
+        only_with_products: bool = False
+    ) -> Dict:
+        """
+        Process all opportunities and generate content.
+        Called by the scheduler pipeline.
+
+        Args:
+            client_id: Optional client ID to filter by
+            regenerate: If True, regenerate existing content
+            only_with_products: If True, only process opportunities with product matches
+
+        Returns:
+            Dictionary with processing results
+        """
+        try:
+            logger.info("Starting content generation process...")
+
+            # Build query for opportunities
+            query = self.supabase.table("opportunities").select("*")
+
+            if client_id:
+                query = query.eq("client_id", client_id)
+
+            # Only get high-priority opportunities (scored)
+            query = query.not_.is_("opportunity_score", "null")
+            query = query.order("opportunity_score", desc=True)
+            query = query.limit(20)  # Generate up to 20 pieces per run
+
+            opportunities_response = query.execute()
+
+            if not opportunities_response.data:
+                logger.info("No scored opportunities found to generate content for")
+                return {
+                    "success": True,
+                    "processed": 0,
+                    "with_product_mentions": 0,
+                    "without_product_mentions": 0,
+                    "message": "No opportunities to process"
+                }
+
+            opportunities = opportunities_response.data
+            logger.info(f"Found {len(opportunities)} opportunities to generate content for")
+
+            # Filter by product if required
+            if only_with_products:
+                opportunities = [o for o in opportunities if o.get('matched_product_id')]
+                logger.info(f"Filtered to {len(opportunities)} opportunities with product matches")
+
+                if not opportunities:
+                    return {
+                        "success": True,
+                        "processed": 0,
+                        "with_product_mentions": 0,
+                        "without_product_mentions": 0,
+                        "message": "No opportunities with product matches"
+                    }
+
+            # Check for existing content if not regenerating
+            if not regenerate:
+                existing_content = self.supabase.table("generated_content")\
+                    .select("opportunity_id")\
+                    .in_("opportunity_id", [o["id"] for o in opportunities])\
+                    .execute()
+
+                existing_ids = {c["opportunity_id"] for c in (existing_content.data or [])}
+                opportunities = [o for o in opportunities if o["id"] not in existing_ids]
+
+                if not opportunities:
+                    logger.info("All opportunities already have generated content")
+                    return {
+                        "success": True,
+                        "processed": 0,
+                        "with_product_mentions": 0,
+                        "without_product_mentions": 0,
+                        "message": "All opportunities already processed"
+                    }
+
+            # Group by client
+            from collections import defaultdict
+            by_client = defaultdict(list)
+            for opp in opportunities:
+                by_client[opp["client_id"]].append(opp)
+
+            total_processed = 0
+            with_products = 0
+            without_products = 0
+
+            # Generate content for each client's opportunities
+            for cid, client_opps in by_client.items():
+                logger.info(f"Generating content for client {cid} ({len(client_opps)} opportunities)")
+
+                result = self.generate_content_for_client(
+                    client_id=cid,
+                    opportunities=client_opps,
+                    delivery_batch=f"PIPELINE-{datetime.now().strftime('%Y-%m-%d')}"
+                )
+
+                if result.get("success"):
+                    generated = result.get("generated", 0)
+                    total_processed += generated
+
+                    # Count product mentions
+                    for content in result.get("content", []):
+                        if content.get("product_mentioned"):
+                            with_products += 1
+                        else:
+                            without_products += 1
+
+            logger.info(f"Content generation complete: {total_processed} pieces generated")
+
+            return {
+                "success": True,
+                "processed": total_processed,
+                "with_product_mentions": with_products,
+                "without_product_mentions": without_products
+            }
+
+        except Exception as e:
+            logger.error(f"Error in process_all_opportunities: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "processed": 0,
+                "with_product_mentions": 0,
+                "without_product_mentions": 0
+            }
+
 
 # Standalone test function
 def test_with_the_waite():
