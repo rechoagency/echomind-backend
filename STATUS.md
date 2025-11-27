@@ -77,7 +77,7 @@ opportunity = {
 
 ## Verification
 
-Test insert successful after fixes:
+### Test Insert (Local)
 ```
 [SUCCESS] INSERT SUCCESSFUL!
   Opportunity ID: 83956120-a20e-4dd0-b401-54346d8e25e2
@@ -85,6 +85,27 @@ Test insert successful after fixes:
   Status: pending
   Subreddit: r/test_subreddit
 ```
+
+### Production Verification (2025-11-27)
+Triggered Reddit scan for Mira client via production API:
+```
+POST /api/admin/trigger-reddit-scan
+{"client_id": "3cee3b35-33e2-4a0c-8a78-dbccffbca434"}
+
+Result: 103 opportunities saved successfully!
+```
+
+Sample opportunity saved:
+```
+Thread ID: 1p7nsov
+Subreddit: r/TryingForABaby
+Title: HSG failure and secondary infertility
+URL: https://reddit.com/r/TryingForABaby/comments/1p7nsov/...
+Status: pending
+Content Type: REPLY
+```
+
+**FIX CONFIRMED WORKING IN PRODUCTION**
 
 ---
 
