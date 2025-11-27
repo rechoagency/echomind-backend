@@ -528,32 +528,26 @@ Write the response now:"""
         try:
             logger.info("Starting content generation process...")
 
-            # Build query for opportunities
-            query = self.supabase.table("opportunities").select("*")
-
-            if client_id:
-                query = query.eq("client_id", client_id)
-
-            # Get opportunities - prefer scored ones but fall back to recent if none scored
+            # Build query for opportunities - prefer scored ones but fall back to recent
             # First try scored opportunities
-            scored_query = query.not_.is_("opportunity_score", "null")
+            scored_query = self.supabase.table("opportunities").select("*")
+            if client_id:
+                scored_query = scored_query.eq("client_id", client_id)
+            scored_query = scored_query.not_.is_("opportunity_score", "null")
             scored_query = scored_query.order("opportunity_score", desc=True)
             scored_query = scored_query.limit(20)
 
-            scored_response = scored_query.execute()
+            opportunities_response = scored_query.execute()
 
-            if scored_response.data:
-                query = scored_query
-            else:
+            if not opportunities_response.data:
                 # No scored opportunities - get recent ones instead
                 logger.info("No scored opportunities found, using recent opportunities")
-                query = self.supabase.table("opportunities").select("*")
+                recent_query = self.supabase.table("opportunities").select("*")
                 if client_id:
-                    query = query.eq("client_id", client_id)
-                query = query.order("created_at", desc=True)
-                query = query.limit(20)
-
-            opportunities_response = query.execute()
+                    recent_query = recent_query.eq("client_id", client_id)
+                recent_query = recent_query.order("created_at", desc=True)
+                recent_query = recent_query.limit(20)
+                opportunities_response = recent_query.execute()
 
             if not opportunities_response.data:
                 logger.info("No scored opportunities found to generate content for")
