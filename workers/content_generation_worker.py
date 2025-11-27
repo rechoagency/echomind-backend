@@ -534,10 +534,24 @@ Write the response now:"""
             if client_id:
                 query = query.eq("client_id", client_id)
 
-            # Only get high-priority opportunities (scored)
-            query = query.not_.is_("opportunity_score", "null")
-            query = query.order("opportunity_score", desc=True)
-            query = query.limit(20)  # Generate up to 20 pieces per run
+            # Get opportunities - prefer scored ones but fall back to recent if none scored
+            # First try scored opportunities
+            scored_query = query.not_.is_("opportunity_score", "null")
+            scored_query = scored_query.order("opportunity_score", desc=True)
+            scored_query = scored_query.limit(20)
+
+            scored_response = scored_query.execute()
+
+            if scored_response.data:
+                query = scored_query
+            else:
+                # No scored opportunities - get recent ones instead
+                logger.info("No scored opportunities found, using recent opportunities")
+                query = self.supabase.table("opportunities").select("*")
+                if client_id:
+                    query = query.eq("client_id", client_id)
+                query = query.order("created_at", desc=True)
+                query = query.limit(20)
 
             opportunities_response = query.execute()
 
@@ -570,7 +584,7 @@ Write the response now:"""
 
             # Check for existing content if not regenerating
             if not regenerate:
-                existing_content = self.supabase.table("generated_content")\
+                existing_content = self.supabase.table("content_delivered")\
                     .select("opportunity_id")\
                     .in_("opportunity_id", [o["id"] for o in opportunities])\
                     .execute()
