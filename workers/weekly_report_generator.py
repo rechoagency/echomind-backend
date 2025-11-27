@@ -257,7 +257,7 @@ Keep it actionable and business-focused. Use markdown formatting."""
                     "Content-Type": "application/json"
                 },
                 json={
-                    "from": "EchoMind Reports <reports@echomind.ai>",
+                    "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@echomind.ai"),
                     "to": [email],
                     "subject": f"📊 Weekly Reddit Report: {len(opportunities)} Opportunities - {client.get('company_name')}",
                     "html": email_html
@@ -327,7 +327,7 @@ Keep it actionable and business-focused. Use markdown formatting."""
                     "Content-Type": "application/json"
                 },
                 json={
-                    "from": "EchoMind Reports <reports@echomind.ai>",
+                    "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@echomind.ai"),
                     "to": [email],
                     "subject": f"📊 Weekly Report: No New Opportunities - {client.get('company_name')}",
                     "html": html
