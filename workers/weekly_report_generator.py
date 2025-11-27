@@ -238,14 +238,6 @@ Keep it actionable and business-focused. Use markdown formatting."""
     ) -> Dict[str, Any]:
         """Send the weekly report via email/Slack"""
         try:
-            # Import notification service
-            from services.notification_service import NotificationService
-            
-            notification_service = NotificationService(
-                supabase_client=self.supabase,
-                openai_api_key=os.getenv("OPENAI_API_KEY")
-            )
-            
             # Build email HTML
             email_html = self._build_report_email(client, opportunities, analysis, top_opportunities)
             
