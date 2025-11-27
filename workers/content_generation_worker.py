@@ -526,10 +526,16 @@ Write the response now:"""
             Dictionary with processing results
         """
         try:
-            logger.info("Starting content generation process...")
+            logger.info("=" * 70)
+            logger.info("🔥 PROCESS_ALL_OPPORTUNITIES CALLED")
+            logger.info("=" * 70)
+            logger.info(f"Client ID: {client_id}")
+            logger.info(f"Regenerate: {regenerate}")
+            logger.info(f"Only with products: {only_with_products}")
 
             # Build query for opportunities - prefer scored ones but fall back to recent
             # First try scored opportunities
+            logger.info("📊 Querying for scored opportunities...")
             scored_query = self.supabase.table("opportunities").select("*")
             if client_id:
                 scored_query = scored_query.eq("client_id", client_id)
@@ -538,16 +544,18 @@ Write the response now:"""
             scored_query = scored_query.limit(20)
 
             opportunities_response = scored_query.execute()
+            logger.info(f"📊 Scored query result: {len(opportunities_response.data or [])} opportunities found")
 
             if not opportunities_response.data:
                 # No scored opportunities - get recent ones instead
-                logger.info("No scored opportunities found, using recent opportunities")
+                logger.info("⚠️ No scored opportunities found, falling back to recent opportunities...")
                 recent_query = self.supabase.table("opportunities").select("*")
                 if client_id:
                     recent_query = recent_query.eq("client_id", client_id)
                 recent_query = recent_query.order("created_at", desc=True)
                 recent_query = recent_query.limit(20)
                 opportunities_response = recent_query.execute()
+                logger.info(f"📊 Recent query result: {len(opportunities_response.data or [])} opportunities found")
 
             if not opportunities_response.data:
                 logger.info("No scored opportunities found to generate content for")
@@ -607,14 +615,29 @@ Write the response now:"""
             without_products = 0
 
             # Generate content for each client's opportunities
+            logger.info(f"🎯 Processing {len(by_client)} client(s) with opportunities")
             for cid, client_opps in by_client.items():
-                logger.info(f"Generating content for client {cid} ({len(client_opps)} opportunities)")
+                logger.info("=" * 50)
+                logger.info(f"🚀 CALLING generate_content_for_client")
+                logger.info(f"   Client ID: {cid}")
+                logger.info(f"   Opportunities: {len(client_opps)}")
+                if client_opps:
+                    sample = client_opps[0]
+                    logger.info(f"   Sample opportunity keys: {list(sample.keys())[:10]}")
+                    logger.info(f"   Sample opportunity ID: {sample.get('id')}")
 
-                result = self.generate_content_for_client(
-                    client_id=cid,
-                    opportunities=client_opps,
-                    delivery_batch=f"PIPELINE-{datetime.now().strftime('%Y-%m-%d')}"
-                )
+                try:
+                    result = self.generate_content_for_client(
+                        client_id=cid,
+                        opportunities=client_opps,
+                        delivery_batch=f"PIPELINE-{datetime.now().strftime('%Y-%m-%d')}"
+                    )
+                    logger.info(f"✅ generate_content_for_client returned: {result}")
+                except Exception as gen_error:
+                    logger.error(f"❌ generate_content_for_client FAILED: {gen_error}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    result = {"success": False, "error": str(gen_error)}
 
                 if result.get("success"):
                     generated = result.get("generated", 0)
@@ -627,7 +650,9 @@ Write the response now:"""
                         else:
                             without_products += 1
 
-            logger.info(f"Content generation complete: {total_processed} pieces generated")
+            logger.info("=" * 70)
+            logger.info(f"🏁 Content generation complete: {total_processed} pieces generated")
+            logger.info("=" * 70)
 
             return {
                 "success": True,
@@ -637,7 +662,11 @@ Write the response now:"""
             }
 
         except Exception as e:
-            logger.error(f"Error in process_all_opportunities: {e}")
+            import traceback
+            logger.error("=" * 70)
+            logger.error(f"❌ FATAL ERROR in process_all_opportunities: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error("=" * 70)
             return {
                 "success": False,
                 "error": str(e),
