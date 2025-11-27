@@ -102,20 +102,25 @@ class ProductMatchbackWorker:
                     stored_embedding = emb.get("embedding")
                     if not stored_embedding:
                         continue
-                    
+
                     # Cosine similarity calculation
                     similarity = self._cosine_similarity(query_embedding, stored_embedding)
-                    
+
                     if similarity >= similarity_threshold:
-                        chunk_data = emb.get("document_chunks", {})
-                        doc_data = chunk_data.get("document_uploads", {})
-                        
+                        # Safely get nested data with None checks
+                        chunk_data = emb.get("document_chunks") or {}
+                        if chunk_data is None:
+                            chunk_data = {}
+                        doc_data = chunk_data.get("document_uploads") or {}
+                        if doc_data is None:
+                            doc_data = {}
+
                         matches.append({
-                            "chunk_text": chunk_data.get("chunk_text", ""),
+                            "chunk_text": chunk_data.get("chunk_text", "") if chunk_data else "",
                             "similarity_score": round(similarity, 4),
-                            "document_id": chunk_data.get("document_id"),
-                            "document_filename": doc_data.get("filename"),
-                            "document_type": doc_data.get("document_type"),
+                            "document_id": chunk_data.get("document_id") if chunk_data else None,
+                            "document_filename": doc_data.get("filename") if doc_data else None,
+                            "document_type": doc_data.get("document_type") if doc_data else None,
                             "chunk_id": emb.get("chunk_id")
                         })
                 except Exception as e:
@@ -240,15 +245,46 @@ class ProductMatchbackWorker:
     def process_all_opportunities(self, client_id: Optional[str] = None, force_rematch: bool = False) -> Dict:
         """
         Process all opportunities without product matches
-        
+
         Args:
             client_id: Optional client ID to filter by
             force_rematch: If True, rematch even if matches already exist
-            
+
         Returns:
             Dictionary with processing results
         """
         try:
+            logger.info("=" * 70)
+            logger.info("🔍 PRODUCT MATCHBACK WORKER STARTED")
+            logger.info("=" * 70)
+            logger.info(f"Client ID: {client_id}, Force rematch: {force_rematch}")
+
+            # CRITICAL: Check if any products/embeddings exist before processing
+            # This prevents the entire pipeline from crashing when no products are configured
+            try:
+                products_check = self.supabase.table("products").select("id", count="exact").limit(1).execute()
+                products_count = products_check.count if products_check.count else 0
+                logger.info(f"📦 Products in database: {products_count}")
+
+                embeddings_check = self.supabase.table("vector_embeddings").select("id", count="exact").limit(1).execute()
+                embeddings_count = embeddings_check.count if embeddings_check.count else 0
+                logger.info(f"📦 Vector embeddings in database: {embeddings_count}")
+
+                if products_count == 0 and embeddings_count == 0:
+                    logger.info("⚠️ No products or embeddings found - skipping matchback (this is OK)")
+                    logger.info("   Products can be added later via document uploads")
+                    return {
+                        "success": True,
+                        "processed": 0,
+                        "matched": 0,
+                        "no_match": 0,
+                        "errors": 0,
+                        "message": "No products configured - matchback skipped (OK to continue)"
+                    }
+            except Exception as check_error:
+                logger.warning(f"⚠️ Could not check products/embeddings: {check_error}")
+                logger.info("   Continuing anyway - matchback will handle missing data gracefully")
+
             logger.info("Starting product matchback process...")
             
             # Get opportunities without product matches (or all if force_rematch)
