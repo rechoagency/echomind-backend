@@ -103,7 +103,7 @@ class WorkerScheduler:
             content_result = self.content_generator.process_all_opportunities(
                 client_id=client_id,
                 regenerate=force_regenerate,
-                only_with_products=True  # Only generate for opportunities with product matches
+                only_with_products=False  # Generate content for all opportunities (products optional)
             )
             results["steps"]["content_generation"] = content_result
             
@@ -214,11 +214,11 @@ class WorkerScheduler:
         matchback_result = self.product_matchback.process_all_opportunities(client_id, force_rematch=False)
         results["matchback"] = matchback_result
         
-        # Generate content for opportunities with new product matches
+        # Generate content for all opportunities (products optional)
         content_result = self.content_generator.process_all_opportunities(
             client_id,
             regenerate=False,
-            only_with_products=True
+            only_with_products=False
         )
         results["content_generation"] = content_result
         
@@ -251,11 +251,11 @@ class WorkerScheduler:
             force_rematch=True
         )
         
-        # Regenerate content
+        # Regenerate content (products optional)
         content_result = self.content_generator.process_all_opportunities(
             client_id=client_id,
             regenerate=True,
-            only_with_products=True
+            only_with_products=False
         )
         
         # Reapply voice
