@@ -536,10 +536,11 @@ Write the response now:"""
             # Build query for opportunities - get recent ones (simple query to avoid timeout)
             # The complex scoring filter was causing Supabase statement timeout
             logger.info("📊 Querying for recent opportunities (simple query)...")
-            query = self.supabase.table("opportunities").select("id, client_id, thread_title, thread_content, subreddit_name, reddit_id, created_at")
+            # Use correct column names: opportunity_id, thread_title, original_post_text, subreddit
+            query = self.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found")
             if client_id:
                 query = query.eq("client_id", client_id)
-            query = query.order("created_at", desc=True)
+            query = query.order("date_found", desc=True)
             query = query.limit(10)  # Start with 10 to avoid timeout
 
             opportunities_response = query.execute()
@@ -576,11 +577,11 @@ Write the response now:"""
             if not regenerate:
                 existing_content = self.supabase.table("content_delivered")\
                     .select("opportunity_id")\
-                    .in_("opportunity_id", [o["id"] for o in opportunities])\
+                    .in_("opportunity_id", [o["opportunity_id"] for o in opportunities])\
                     .execute()
 
                 existing_ids = {c["opportunity_id"] for c in (existing_content.data or [])}
-                opportunities = [o for o in opportunities if o["id"] not in existing_ids]
+                opportunities = [o for o in opportunities if o["opportunity_id"] not in existing_ids]
 
                 if not opportunities:
                     logger.info("All opportunities already have generated content")
@@ -612,7 +613,7 @@ Write the response now:"""
                 if client_opps:
                     sample = client_opps[0]
                     logger.info(f"   Sample opportunity keys: {list(sample.keys())[:10]}")
-                    logger.info(f"   Sample opportunity ID: {sample.get('id')}")
+                    logger.info(f"   Sample opportunity ID: {sample.get('opportunity_id')}")
 
                 try:
                     result = self.generate_content_for_client(
