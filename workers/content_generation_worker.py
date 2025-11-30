@@ -425,7 +425,7 @@ Write the response now:"""
                         logger.info(f"      💰 Traffic attribution: {website_url}")
                 
                 # STEP 9: Log delivery to database WITH PROFILE INFO & KNOWLEDGE INSIGHTS
-                self.log_content_delivery(
+                db_error = self.log_content_delivery(
                     client_id=client_id,
                     content_type=content_type,
                     subreddit=subreddit,
@@ -439,7 +439,7 @@ Write the response now:"""
                     profile_username=opportunity.get('profile_username'),
                     knowledge_insights_count=len(knowledge_insights)
                 )
-                
+
                 generated_content.append({
                     'type': content_type,
                     'text': content_text,
@@ -449,7 +449,8 @@ Write the response now:"""
                     'assigned_profile': opportunity.get('profile_username', 'NO_PROFILE'),
                     'profile_karma': opportunity.get('profile_karma', 0),
                     'opportunity_id': opportunity.get('opportunity_id'),
-                    'thread_title': opportunity.get('thread_title', '')
+                    'thread_title': opportunity.get('thread_title', ''),
+                    'db_insert_error': db_error  # Will be None if successful
                 })
                 
             except Exception as e:
@@ -479,11 +480,15 @@ Write the response now:"""
         profile_id: Optional[str] = None,
         profile_username: Optional[str] = None,
         knowledge_insights_count: int = 0
-    ):
-        """Log content delivery to database for analytics WITH PROFILE INFO & KNOWLEDGE BASE USAGE"""
+    ) -> Optional[str]:
+        """Log content delivery to database for analytics WITH PROFILE INFO & KNOWLEDGE BASE USAGE
+
+        Returns:
+            None on success, error message string on failure
+        """
         try:
             # Use correct column names matching content_tracking_service schema
-            self.supabase.table('content_delivered').insert({
+            insert_data = {
                 'client_id': client_id,
                 'delivery_date': datetime.utcnow().isoformat(),
                 'delivery_batch': delivery_batch or f"PIPELINE-{datetime.utcnow().strftime('%Y-%m-%d')}",
@@ -501,11 +506,15 @@ Write the response now:"""
                     'profile_id': profile_id,
                     'profile_username': profile_username
                 }
-            }).execute()
-
-            logger.info(f"      ✅ Logged {content_type} to content_delivered")
+            }
+            logger.info(f"      📝 Inserting to content_delivered: {list(insert_data.keys())}")
+            result = self.supabase.table('content_delivered').insert(insert_data).execute()
+            logger.info(f"      ✅ Logged {content_type} to content_delivered (result: {result.data})")
+            return None
         except Exception as e:
-            logger.error(f"      ❌ Error logging delivery: {e}")
+            error_msg = str(e)
+            logger.error(f"      ❌ Error logging delivery: {error_msg}")
+            return error_msg
 
     def process_all_opportunities(
         self,
