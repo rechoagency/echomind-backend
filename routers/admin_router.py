@@ -568,7 +568,7 @@ async def test_content_generation_sync():
 
         result = worker.process_all_opportunities(
             client_id=client_id,
-            regenerate=False,
+            regenerate=True,  # Force regeneration to test
             only_with_products=False
         )
 
