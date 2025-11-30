@@ -541,3 +541,54 @@ async def run_worker_pipeline(background_tasks: BackgroundTasks, request: dict):
     except Exception as e:
         logger.error(f"Error running worker pipeline: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/test-content-generation")
+async def test_content_generation_sync():
+    """
+    Synchronous test endpoint for content generation.
+    Runs content generation directly (not in background) so we can see errors.
+
+    This is for debugging only - returns full result including any errors.
+    """
+    import traceback
+
+    try:
+        logger.info("🧪 TEST CONTENT GENERATION - Starting synchronous test")
+
+        # Import the worker
+        from workers.content_generation_worker import ContentGenerationWorker
+
+        # Create worker instance
+        worker = ContentGenerationWorker()
+
+        # Run synchronously with Mira client
+        client_id = "3cee3b35-33e2-4a0c-8a78-dbccffbca434"
+        logger.info(f"🧪 Calling process_all_opportunities for client {client_id}")
+
+        result = worker.process_all_opportunities(
+            client_id=client_id,
+            regenerate=False,
+            only_with_products=False
+        )
+
+        logger.info(f"🧪 Result: {result}")
+
+        return {
+            "success": True,
+            "test_type": "synchronous_content_generation",
+            "client_id": client_id,
+            "result": result
+        }
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        logger.error(f"🧪 TEST FAILED: {e}")
+        logger.error(f"Traceback: {error_traceback}")
+
+        return {
+            "success": False,
+            "test_type": "synchronous_content_generation",
+            "error": str(e),
+            "traceback": error_traceback
+        }
