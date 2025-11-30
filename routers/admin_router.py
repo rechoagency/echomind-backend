@@ -623,3 +623,102 @@ async def test_content_generation_sync():
             "error": str(e),
             "traceback": error_traceback
         }
+
+
+@router.post("/run-opportunity-scoring")
+async def run_opportunity_scoring(client_id: str = None):
+    """
+    Manually trigger opportunity scoring for all or specific client.
+    Scores opportunities by: buying intent, pain points, questions, engagement, urgency.
+    """
+    try:
+        logger.info(f"🎯 Starting opportunity scoring (client_id: {client_id or 'all'})")
+
+        from workers.opportunity_scoring_worker import OpportunityScoringWorker
+
+        worker = OpportunityScoringWorker()
+        result = worker.process_all_opportunities(client_id)
+
+        logger.info(f"🎯 Scoring complete: {result}")
+
+        return {
+            "success": True,
+            "action": "opportunity_scoring",
+            "client_id": client_id,
+            "result": result
+        }
+
+    except Exception as e:
+        logger.error(f"🎯 Scoring failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/pipeline-status")
+async def get_pipeline_status():
+    """
+    Get status of all pipeline components.
+    """
+    try:
+        supabase = get_supabase()
+
+        # Check voice profiles
+        voice_profiles = supabase.table("voice_profiles").select("id", count="exact").execute()
+        voice_count = voice_profiles.count if voice_profiles.count else 0
+
+        # Check scored opportunities
+        scored_opps = supabase.table("opportunities").select("opportunity_id", count="exact").not_.is_("opportunity_score", "null").execute()
+        scored_count = scored_opps.count if scored_opps.count else 0
+
+        # Check total opportunities
+        total_opps = supabase.table("opportunities").select("opportunity_id", count="exact").execute()
+        total_count = total_opps.count if total_opps.count else 0
+
+        # Check knowledge base (document_uploads or client_documents)
+        try:
+            docs = supabase.table("document_uploads").select("id", count="exact").execute()
+            docs_count = docs.count if docs.count else 0
+        except:
+            docs_count = 0
+
+        # Check vector embeddings
+        try:
+            embeddings = supabase.table("vector_embeddings").select("id", count="exact").execute()
+            embeddings_count = embeddings.count if embeddings.count else 0
+        except:
+            embeddings_count = 0
+
+        # Check content delivered
+        content = supabase.table("content_delivered").select("id", count="exact").execute()
+        content_count = content.count if content.count else 0
+
+        return {
+            "pipeline_components": {
+                "voice_database": {
+                    "profiles": voice_count,
+                    "status": "POPULATED" if voice_count > 0 else "EMPTY"
+                },
+                "opportunity_scoring": {
+                    "scored": scored_count,
+                    "total": total_count,
+                    "percentage": round(scored_count / total_count * 100, 1) if total_count > 0 else 0,
+                    "status": "COMPLETE" if scored_count == total_count and total_count > 0 else "PARTIAL" if scored_count > 0 else "NOT_RUN"
+                },
+                "knowledge_base": {
+                    "documents": docs_count,
+                    "embeddings": embeddings_count,
+                    "status": "POPULATED" if embeddings_count > 0 else "EMPTY"
+                },
+                "content_generation": {
+                    "pieces": content_count,
+                    "status": "ACTIVE" if content_count > 0 else "NO_CONTENT"
+                }
+            },
+            "overall_status": "READY" if voice_count > 0 and scored_count > 0 else "NEEDS_SETUP"
+        }
+
+    except Exception as e:
+        logger.error(f"Pipeline status check failed: {e}")
+        return {"error": str(e)}
