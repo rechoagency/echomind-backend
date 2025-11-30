@@ -583,6 +583,11 @@ async def test_content_generation_sync():
 
         logger.info(f"🧪 Result: {result}")
 
+        # Check actual content in database after generation
+        content_check = worker.supabase.table("content_delivered").select("id, client_id, content_type, subreddit_name, delivered_at").eq("client_id", client_id).order("delivered_at", desc=True).limit(5).execute()
+        content_count = len(content_check.data) if content_check.data else 0
+        sample_content = content_check.data[0] if content_check.data else None
+
         return {
             "success": True,
             "test_type": "synchronous_content_generation",
@@ -592,7 +597,11 @@ async def test_content_generation_sync():
                 "sample": sample_opp,
                 "worker_query_count": worker_query_count
             },
-            "result": result
+            "result": result,
+            "content_in_database": {
+                "count": content_count,
+                "sample": sample_content
+            }
         }
 
     except Exception as e:
