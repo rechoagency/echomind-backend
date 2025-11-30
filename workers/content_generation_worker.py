@@ -487,14 +487,14 @@ Write the response now:"""
             None on success, error message string on failure
         """
         try:
-            # Minimal insert - only columns that definitely exist
-            # Other columns may not exist in the actual Supabase table
+            # Use column names that match actual Supabase schema
+            # From reports_router.py: subreddit_name, delivered_at
             insert_data = {
                 'client_id': client_id,
                 'content_type': content_type,
-                'subreddit': subreddit or 'unknown',
-                'opportunity_id': opportunity_id,
-                'suggested_content': content_text,
+                'subreddit_name': subreddit or 'unknown',
+                'delivered_at': datetime.utcnow().isoformat(),
+                'body': content_text,  # Body for the content
             }
             logger.info(f"      📝 Inserting to content_delivered: {list(insert_data.keys())}")
             result = self.supabase.table('content_delivered').insert(insert_data).execute()
