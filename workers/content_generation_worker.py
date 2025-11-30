@@ -51,7 +51,11 @@ class ContentGenerationWorker:
         """Initialize the content generation worker"""
         self.supabase = supabase
         self.openai = openai_client
-    
+        self.profile_rotation = ProfileRotationService()
+        self.strategy_progression = StrategyProgressionService()
+        self.knowledge_matchback = KnowledgeMatchbackService(supabase)
+        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION, TIME-BASED STRATEGY & KNOWLEDGE BASE RAG)")
+
     @retry_on_openai_error(max_attempts=3)
     def _call_openai_with_retry(self, prompt: str, max_tokens: int = 250) -> str:
         """Call OpenAI API with automatic retry and exponential backoff."""
@@ -69,10 +73,6 @@ class ContentGenerationWorker:
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
             raise
-        self.profile_rotation = ProfileRotationService()
-        self.strategy_progression = StrategyProgressionService()
-        self.knowledge_matchback = KnowledgeMatchbackService(supabase)
-        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION, TIME-BASED STRATEGY & KNOWLEDGE BASE RAG)")
     
     def get_client_settings(self, client_id: str) -> Dict:
         """
