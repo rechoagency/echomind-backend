@@ -482,27 +482,27 @@ Write the response now:"""
     ):
         """Log content delivery to database for analytics WITH PROFILE INFO & KNOWLEDGE BASE USAGE"""
         try:
-            # Map to actual database schema (uses delivered_at, subreddit_name, title/body)
+            # Use correct column names matching content_tracking_service schema
             self.supabase.table('content_delivered').insert({
                 'client_id': client_id,
-                'delivered_at': datetime.now(),
+                'delivery_date': datetime.utcnow().isoformat(),
+                'delivery_batch': delivery_batch or f"PIPELINE-{datetime.utcnow().strftime('%Y-%m-%d')}",
                 'content_type': content_type,
-                'subreddit_name': subreddit,
-                'title': content_text[:500] if content_type == 'post' else None,  # First 500 chars for title
-                'body': content_text,
+                'subreddit': subreddit,
                 'opportunity_id': opportunity_id,
-                'product_mention_count': 1 if product_mentioned else 0,
-                'brand_mention_count': 1 if brand_mentioned else 0,
+                'suggested_content': content_text,
+                'brand_mentioned': brand_mentioned,
+                'product_mentioned': bool(product_mentioned),
+                'status': 'delivered',
                 'metadata': {
                     'knowledge_insights_count': knowledge_insights_count,
                     'thought_leadership_enabled': knowledge_insights_count > 0,
                     'generation_model': 'gpt-4',
                     'profile_id': profile_id,
-                    'profile_username': profile_username,
-                    'delivery_batch': delivery_batch
+                    'profile_username': profile_username
                 }
             }).execute()
-            
+
             logger.info(f"      ✅ Logged {content_type} to content_delivered")
         except Exception as e:
             logger.error(f"      ❌ Error logging delivery: {e}")
