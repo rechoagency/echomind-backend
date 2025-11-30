@@ -566,11 +566,14 @@ async def test_content_generation_sync():
         client_id = "3cee3b35-33e2-4a0c-8a78-dbccffbca434"
         logger.info(f"🧪 Calling process_all_opportunities for client {client_id}")
 
-        # First, let's check how many opportunities exist
-        supabase = get_supabase()
-        opps_check = supabase.table("opportunities").select("opportunity_id").eq("client_id", client_id).limit(5).execute()
+        # First, let's check how many opportunities exist using worker's supabase
+        opps_check = worker.supabase.table("opportunities").select("opportunity_id, thread_title").eq("client_id", client_id).order("date_found", desc=True).limit(5).execute()
         opps_count = len(opps_check.data) if opps_check.data else 0
         sample_opp = opps_check.data[0] if opps_check.data else None
+
+        # Also check what the worker's query returns
+        worker_query = worker.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found").eq("client_id", client_id).order("date_found", desc=True).limit(10).execute()
+        worker_query_count = len(worker_query.data) if worker_query.data else 0
 
         result = worker.process_all_opportunities(
             client_id=client_id,
@@ -586,7 +589,8 @@ async def test_content_generation_sync():
             "client_id": client_id,
             "opportunities_check": {
                 "count": opps_count,
-                "sample": sample_opp
+                "sample": sample_opp,
+                "worker_query_count": worker_query_count
             },
             "result": result
         }
