@@ -533,29 +533,17 @@ Write the response now:"""
             logger.info(f"Regenerate: {regenerate}")
             logger.info(f"Only with products: {only_with_products}")
 
-            # Build query for opportunities - prefer scored ones but fall back to recent
-            # First try scored opportunities
-            logger.info("📊 Querying for scored opportunities...")
-            scored_query = self.supabase.table("opportunities").select("*")
+            # Build query for opportunities - get recent ones (simple query to avoid timeout)
+            # The complex scoring filter was causing Supabase statement timeout
+            logger.info("📊 Querying for recent opportunities (simple query)...")
+            query = self.supabase.table("opportunities").select("id, client_id, thread_title, thread_content, subreddit_name, reddit_id, created_at")
             if client_id:
-                scored_query = scored_query.eq("client_id", client_id)
-            scored_query = scored_query.not_.is_("opportunity_score", "null")
-            scored_query = scored_query.order("opportunity_score", desc=True)
-            scored_query = scored_query.limit(20)
+                query = query.eq("client_id", client_id)
+            query = query.order("created_at", desc=True)
+            query = query.limit(10)  # Start with 10 to avoid timeout
 
-            opportunities_response = scored_query.execute()
-            logger.info(f"📊 Scored query result: {len(opportunities_response.data or [])} opportunities found")
-
-            if not opportunities_response.data:
-                # No scored opportunities - get recent ones instead
-                logger.info("⚠️ No scored opportunities found, falling back to recent opportunities...")
-                recent_query = self.supabase.table("opportunities").select("*")
-                if client_id:
-                    recent_query = recent_query.eq("client_id", client_id)
-                recent_query = recent_query.order("created_at", desc=True)
-                recent_query = recent_query.limit(20)
-                opportunities_response = recent_query.execute()
-                logger.info(f"📊 Recent query result: {len(opportunities_response.data or [])} opportunities found")
+            opportunities_response = query.execute()
+            logger.info(f"📊 Query result: {len(opportunities_response.data or [])} opportunities found")
 
             if not opportunities_response.data:
                 logger.info("No scored opportunities found to generate content for")
