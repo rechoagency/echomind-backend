@@ -487,25 +487,14 @@ Write the response now:"""
             None on success, error message string on failure
         """
         try:
-            # Use correct column names matching content_tracking_service schema
+            # Minimal insert - only columns that definitely exist
+            # Other columns may not exist in the actual Supabase table
             insert_data = {
                 'client_id': client_id,
-                'delivery_date': datetime.utcnow().isoformat(),
-                'delivery_batch': delivery_batch or f"PIPELINE-{datetime.utcnow().strftime('%Y-%m-%d')}",
                 'content_type': content_type,
-                'subreddit': subreddit,
+                'subreddit': subreddit or 'unknown',
                 'opportunity_id': opportunity_id,
                 'suggested_content': content_text,
-                'brand_mentioned': brand_mentioned,
-                'product_mentioned': bool(product_mentioned),
-                'status': 'delivered',
-                'metadata': {
-                    'knowledge_insights_count': knowledge_insights_count,
-                    'thought_leadership_enabled': knowledge_insights_count > 0,
-                    'generation_model': 'gpt-4',
-                    'profile_id': profile_id,
-                    'profile_username': profile_username
-                }
             }
             logger.info(f"      📝 Inserting to content_delivered: {list(insert_data.keys())}")
             result = self.supabase.table('content_delivered').insert(insert_data).execute()
