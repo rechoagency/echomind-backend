@@ -161,8 +161,8 @@ class ContentGenerationWorker:
         Build prompt for GPT content generation WITH slider controls AND subreddit ownership logic
         """
         thread_title = opportunity.get("thread_title", "")
-        thread_content = opportunity.get("thread_content", "")
-        subreddit = opportunity.get("subreddit_name", "")
+        thread_content = opportunity.get("original_post_text", "")  # Use correct column name
+        subreddit = opportunity.get("subreddit", "")  # Use correct column name
         
         # Check if brand owns this subreddit
         owned_subreddits = []
@@ -379,7 +379,7 @@ Write the response now:"""
                 logger.info(f"      Product mention: {'✅ Yes' if mention_product else '❌ No'} (similarity: {product_similarity:.2f})")
                 
                 # Get voice profile
-                subreddit = opportunity.get('subreddit_name', '')
+                subreddit = opportunity.get('subreddit', '')  # Use correct column name
                 voice_profile = self.get_voice_profile(subreddit, client_id)
                 
                 # Get product matches
