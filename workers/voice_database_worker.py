@@ -279,11 +279,20 @@ async def build_client_voice_database(client_id: str) -> Dict[str, Any]:
     """
     worker = VoiceDatabaseWorker()
     
-    # Get client's subreddits
+    # Get client's subreddits from client_subreddit_config table
+    # (This is where onboarding stores target subreddits)
     supabase = get_supabase_client()
-    subreddits_response = supabase.table("subreddits").select("subreddit_name").eq("client_id", client_id).execute()
-    
-    subreddits = [s['subreddit_name'] for s in subreddits_response.data]
+    subreddits_response = supabase.table("client_subreddit_config").select("subreddit_name").eq("client_id", client_id).eq("is_active", True).execute()
+
+    subreddits = [s['subreddit_name'] for s in subreddits_response.data] if subreddits_response.data else []
+
+    # Fallback: If no subreddit config, try to get unique subreddits from opportunities
+    if not subreddits:
+        logger.info("No subreddit config found, falling back to opportunities table")
+        opps_response = supabase.table("opportunities").select("subreddit").eq("client_id", client_id).execute()
+        if opps_response.data:
+            subreddits = list(set([o['subreddit'] for o in opps_response.data if o.get('subreddit')]))[:10]  # Top 10 unique
+            logger.info(f"Found {len(subreddits)} unique subreddits from opportunities")
     
     logger.info(f"Building voice database for {len(subreddits)} subreddits")
     

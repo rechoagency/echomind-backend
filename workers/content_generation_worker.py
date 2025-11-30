@@ -127,11 +127,13 @@ class ContentGenerationWorker:
     def get_voice_profile(self, subreddit_name: str, client_id: str) -> Optional[Dict]:
         """
         Get voice profile for a subreddit
+        Note: voice_database_worker saves to 'subreddit' column, not 'subreddit_name'
         """
         try:
+            # Try 'subreddit' column first (what voice_database_worker uses)
             profile = self.supabase.table("voice_profiles")\
                 .select("*")\
-                .eq("subreddit_name", subreddit_name.lower())\
+                .eq("subreddit", subreddit_name.lower())\
                 .eq("client_id", client_id)\
                 .execute()
             

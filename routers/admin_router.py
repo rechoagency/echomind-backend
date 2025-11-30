@@ -722,3 +722,87 @@ async def get_pipeline_status():
     except Exception as e:
         logger.error(f"Pipeline status check failed: {e}")
         return {"error": str(e)}
+
+
+@router.post("/configure-subreddits")
+async def configure_client_subreddits(request: dict):
+    """
+    Add subreddits to client_subreddit_config table for an existing client.
+    Use this to fix clients that were onboarded without proper subreddit configuration.
+
+    Request body:
+    {
+        "client_id": "uuid-here",
+        "subreddits": ["Menopause", "PCOS", "TryingForABaby"]
+    }
+    """
+    try:
+        supabase = get_supabase()
+        client_id = request.get("client_id")
+        subreddits = request.get("subreddits", [])
+
+        if not client_id:
+            return {"success": False, "error": "client_id is required"}
+        if not subreddits:
+            return {"success": False, "error": "subreddits list is required"}
+
+        # Verify client exists
+        client = supabase.table("clients").select("client_id, company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            return {"success": False, "error": f"Client {client_id} not found"}
+
+        # Check existing subreddit configs
+        existing = supabase.table("client_subreddit_config").select("subreddit_name").eq("client_id", client_id).execute()
+        existing_names = [s["subreddit_name"].lower() for s in (existing.data or [])]
+
+        # Insert new subreddits (skip duplicates)
+        new_configs = []
+        skipped = []
+        for sub in subreddits:
+            sub_clean = sub.lower().replace("r/", "")
+            if sub_clean in existing_names:
+                skipped.append(sub_clean)
+            else:
+                new_configs.append({
+                    "client_id": client_id,
+                    "subreddit_name": sub_clean,
+                    "is_active": True,
+                    "created_at": datetime.utcnow().isoformat()
+                })
+
+        if new_configs:
+            supabase.table("client_subreddit_config").insert(new_configs).execute()
+            logger.info(f"Added {len(new_configs)} subreddits for client {client_id}")
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "client_name": client.data[0].get("company_name"),
+            "added": [c["subreddit_name"] for c in new_configs],
+            "skipped_duplicates": skipped,
+            "total_configured": len(existing_names) + len(new_configs)
+        }
+
+    except Exception as e:
+        logger.error(f"Configure subreddits failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/client-subreddits/{client_id}")
+async def get_client_subreddits(client_id: str):
+    """Get all configured subreddits for a client"""
+    try:
+        supabase = get_supabase()
+
+        # Get subreddit configs
+        configs = supabase.table("client_subreddit_config").select("*").eq("client_id", client_id).execute()
+
+        return {
+            "client_id": client_id,
+            "subreddits": configs.data or [],
+            "count": len(configs.data or [])
+        }
+
+    except Exception as e:
+        logger.error(f"Get subreddits failed: {e}")
+        return {"error": str(e)}
