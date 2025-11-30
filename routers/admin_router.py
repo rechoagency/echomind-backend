@@ -566,6 +566,12 @@ async def test_content_generation_sync():
         client_id = "3cee3b35-33e2-4a0c-8a78-dbccffbca434"
         logger.info(f"🧪 Calling process_all_opportunities for client {client_id}")
 
+        # First, let's check how many opportunities exist
+        supabase = get_supabase()
+        opps_check = supabase.table("opportunities").select("opportunity_id").eq("client_id", client_id).limit(5).execute()
+        opps_count = len(opps_check.data) if opps_check.data else 0
+        sample_opp = opps_check.data[0] if opps_check.data else None
+
         result = worker.process_all_opportunities(
             client_id=client_id,
             regenerate=True,  # Force regeneration to test
@@ -578,6 +584,10 @@ async def test_content_generation_sync():
             "success": True,
             "test_type": "synchronous_content_generation",
             "client_id": client_id,
+            "opportunities_check": {
+                "count": opps_count,
+                "sample": sample_opp
+            },
             "result": result
         }
 
