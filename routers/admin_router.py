@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List
 import logging
 import os
+from datetime import datetime
 from openai import AsyncOpenAI
 
 logging.basicConfig(level=logging.INFO)
@@ -575,11 +576,18 @@ async def test_content_generation_sync():
         worker_query = worker.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found").eq("client_id", client_id).order("date_found", desc=True).limit(10).execute()
         worker_query_count = len(worker_query.data) if worker_query.data else 0
 
-        result = worker.process_all_opportunities(
-            client_id=client_id,
-            regenerate=True,  # Force regeneration to test
-            only_with_products=False
-        )
+        # Directly call generate_content_for_client with just 2 opportunities to avoid timeout
+        # Take first 2 opportunities for quick test
+        test_opps = worker_query.data[:2] if worker_query.data else []
+
+        if test_opps:
+            result = worker.generate_content_for_client(
+                client_id=client_id,
+                opportunities=test_opps,
+                delivery_batch=f"TEST-{datetime.now().strftime('%Y-%m-%d')}"
+            )
+        else:
+            result = {"success": False, "error": "No opportunities found"}
 
         logger.info(f"🧪 Result: {result}")
 
