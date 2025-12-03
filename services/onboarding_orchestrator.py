@@ -82,16 +82,27 @@ class OnboardingOrchestrator:
                     logger.info(f"✅ Extracted {keyword_results.get('count')} keywords")
                 else:
                     results["tasks_failed"].append("keyword_extraction")
-            
-            # TASK 3: Score existing opportunities
+
+            # TASK 3: Build voice database for subreddits
+            logger.info("🎤 Building voice database...")
+            voice_results = await self._build_voice_database(client_id)
+            results["voice_database"] = voice_results
+            if voice_results.get("success"):
+                results["tasks_completed"].append("voice_database")
+                logger.info(f"✅ Built voice profiles for {voice_results.get('successful', 0)} subreddits")
+            else:
+                results["tasks_failed"].append("voice_database")
+                logger.warning(f"⚠️ Voice database partially failed: {voice_results.get('error', 'Unknown')}")
+
+            # TASK 4: Score existing opportunities
             logger.info("📊 Scoring opportunities...")
             scoring_results = await self._score_opportunities(client_id)
             results["opportunity_scoring"] = scoring_results
             if scoring_results.get("success"):
                 results["tasks_completed"].append("opportunity_scoring")
                 logger.info(f"✅ Scored {scoring_results.get('count', 0)} opportunities")
-            
-            # TASK 4: Generate content calendar
+
+            # TASK 5: Generate content calendar
             logger.info("📅 Generating content calendar...")
             calendar_results = await self._generate_content_calendar(client)
             results["content_calendar"] = calendar_results
@@ -99,7 +110,7 @@ class OnboardingOrchestrator:
                 results["tasks_completed"].append("content_calendar")
                 logger.info(f"✅ Calendar generated with {calendar_results.get('items', 0)} items")
             
-            # TASK 5: Send welcome email
+            # TASK 6: Send welcome email
             logger.info("📧 Sending welcome email...")
             email_results = await self._send_welcome_email(client, calendar_results)
             results["email_notification"] = email_results
@@ -142,7 +153,22 @@ class OnboardingOrchestrator:
                 pass
             
             return results
-    
+
+    async def _build_voice_database(self, client_id: str) -> Dict:
+        """Build voice profiles for client's configured subreddits"""
+        try:
+            from workers.voice_database_worker import build_client_voice_database
+            result = await build_client_voice_database(client_id)
+            return {
+                "success": result.get("failed", 0) < result.get("total_subreddits", 1),
+                "total_subreddits": result.get("total_subreddits", 0),
+                "successful": result.get("successful", 0),
+                "failed": result.get("failed", 0)
+            }
+        except Exception as e:
+            logger.error(f"Voice database build error: {str(e)}")
+            return {"success": False, "error": str(e)}
+
     async def _score_opportunities(self, client_id: str) -> Dict:
         """Score top 100 opportunities for client"""
         try:

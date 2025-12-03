@@ -292,22 +292,32 @@ class OpportunityScoringWorker:
                 try:
                     # Calculate scores
                     scores = self.score_opportunity(opp)
-                    
-                    # Update database - use opportunity_id (not id)
-                    # Note: scoring columns may not exist in all schemas
-                    # For now, just log the scores instead of updating
+
+                    # Get opportunity ID (handle both column names)
                     opp_id = opp.get("opportunity_id") or opp.get("id")
-                    logger.info(f"Scored opportunity {opp_id}: {scores['opportunity_score']} ({scores['priority']})")
-                    
+
+                    # Update database with scores
+                    update_data = {
+                        "opportunity_score": scores['opportunity_score'],
+                        "priority_tier": scores['priority'],
+                        "updated_at": datetime.utcnow().isoformat()
+                    }
+
+                    # Use opportunity_id if available, otherwise id
+                    if opp.get("opportunity_id"):
+                        self.supabase.table("opportunities").update(update_data).eq("opportunity_id", opp_id).execute()
+                    else:
+                        self.supabase.table("opportunities").update(update_data).eq("id", opp_id).execute()
+
                     processed += 1
-                    
-                    if processed % 10 == 0:
+
+                    if processed % 100 == 0:
                         logger.info(f"Processed {processed}/{len(opportunities.data)} opportunities")
-                
+
                 except Exception as e:
                     logger.error(f"Error scoring opportunity {opp.get('id')}: {str(e)}")
                     errors += 1
-            
+
             logger.info(f"Scoring complete: {processed} processed, {errors} errors")
             
             return {
@@ -349,16 +359,23 @@ class OpportunityScoringWorker:
             
             # Calculate scores
             scores = self.score_opportunity(opp.data[0])
-            
-            # Log the scores (DB update disabled - columns may not exist)
+
+            # Update database with scores
+            update_data = {
+                "opportunity_score": scores['opportunity_score'],
+                "priority_tier": scores['priority'],
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            self.supabase.table("opportunities").update(update_data).eq("id", opportunity_id).execute()
+
             logger.info(f"Rescored opportunity {opportunity_id}: {scores['opportunity_score']} ({scores['priority']})")
-            
+
             return {
                 "success": True,
                 "opportunity_id": opportunity_id,
                 "scores": scores
             }
-        
+
         except Exception as e:
             logger.error(f"Error rescoring opportunity: {str(e)}")
             return {

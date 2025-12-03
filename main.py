@@ -136,11 +136,26 @@ async def lifespan(app: FastAPI):
                 replace_existing=True
             )
             logger.info("✅ Scheduled: Auto-replies (Every 6 hours)")
-        
+
+        # Schedule opportunity scoring (Daily, 10am EST - after Reddit scan at 9am)
+        from workers.opportunity_scoring_worker import score_all_opportunities
+        scheduler.add_job(
+            score_all_opportunities,
+            trigger=CronTrigger(
+                hour=10,
+                minute=0,
+                timezone=pytz.timezone('US/Eastern')
+            ),
+            id='opportunity_scoring',
+            name='Opportunity Scoring: Daily at 10am EST',
+            replace_existing=True
+        )
+        logger.info("✅ Scheduled: Opportunity scoring (Daily 10am EST)")
+
         # Start scheduler
         scheduler.start()
         logger.info("✅ Background worker scheduler started")
-        
+
     except Exception as e:
         logger.error(f"❌ Worker scheduling failed: {str(e)}")
         logger.error("   Workers will not run automatically")
