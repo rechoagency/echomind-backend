@@ -290,11 +290,11 @@ async def get_client_documents(client_id: str):
                 "filename": doc.get('filename'),
                 "file_type": doc.get('file_type'),
                 "document_type": doc.get('document_type'),
-                "file_size_bytes": doc.get('file_size_bytes'),
-                "chunks_created": doc.get('chunks_created', 0),
-                "vectors_created": doc.get('vectors_created', 0),
-                "created_at": doc.get('created_at'),
-                "status": doc.get('status', 'processed')
+                "file_size_bytes": doc.get('file_size'),
+                "chunks_created": doc.get('chunk_count', 0),
+                "vectors_created": doc.get('chunk_count', 0),
+                "created_at": doc.get('created_at') or doc.get('uploaded_at'),
+                "status": doc.get('processing_status', 'processed')
             } for doc in documents]
         }
     
