@@ -806,3 +806,154 @@ async def get_client_subreddits(client_id: str):
     except Exception as e:
         logger.error(f"Get subreddits failed: {e}")
         return {"error": str(e)}
+
+
+@router.post("/reprocess-documents/{client_id}")
+async def reprocess_stuck_documents(client_id: str, background_tasks: BackgroundTasks):
+    """
+    Reprocess documents stuck in 'processing' status
+
+    Use this when documents were uploaded but chunking/embedding failed
+    (typically due to timeout)
+
+    Runs in background - returns immediately
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        company_name = client.data[0].get("company_name")
+
+        # Get stuck documents
+        stuck_docs = supabase.table("document_uploads")\
+            .select("*")\
+            .eq("client_id", client_id)\
+            .eq("processing_status", "processing")\
+            .execute()
+
+        if not stuck_docs.data:
+            return {
+                "success": True,
+                "message": "No stuck documents to reprocess",
+                "client_id": client_id
+            }
+
+        logger.info(f"🔄 Reprocessing {len(stuck_docs.data)} stuck documents for {company_name}")
+
+        async def reprocess_documents():
+            """Background task to reprocess documents"""
+            from services.document_ingestion_service import DocumentIngestionService
+
+            service = DocumentIngestionService(supabase, os.getenv("OPENAI_API_KEY"))
+            results = []
+
+            for doc in stuck_docs.data:
+                doc_id = doc.get("id")
+                filename = doc.get("filename")
+
+                try:
+                    # Mark as failed first (so we can retry)
+                    supabase.table("document_uploads").update({
+                        "processing_status": "retrying"
+                    }).eq("id", doc_id).execute()
+
+                    # We don't have the original file content, so mark as failed
+                    # Future: store files in Supabase Storage for retry
+                    supabase.table("document_uploads").update({
+                        "processing_status": "failed",
+                        "error_message": "Cannot reprocess - original file not stored. Please re-upload."
+                    }).eq("id", doc_id).execute()
+
+                    results.append({
+                        "document_id": doc_id,
+                        "filename": filename,
+                        "status": "marked_failed",
+                        "message": "Please re-upload this file"
+                    })
+
+                except Exception as e:
+                    logger.error(f"Error marking document {doc_id}: {e}")
+                    results.append({
+                        "document_id": doc_id,
+                        "filename": filename,
+                        "status": "error",
+                        "error": str(e)
+                    })
+
+            logger.info(f"✅ Reprocessing complete for {company_name}: {len(results)} documents updated")
+            return results
+
+        background_tasks.add_task(reprocess_documents)
+
+        return {
+            "success": True,
+            "message": f"Reprocessing {len(stuck_docs.data)} stuck documents for {company_name}",
+            "client_id": client_id,
+            "documents": [{"id": d["id"], "filename": d.get("filename")} for d in stuck_docs.data],
+            "note": "Documents will be marked as failed - please re-upload them"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reprocess documents failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/documents/{client_id}/stuck")
+async def delete_stuck_documents(client_id: str):
+    """
+    Delete all documents stuck in 'processing' status
+
+    Use this to clean up failed uploads so user can try again
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        company_name = client.data[0].get("company_name")
+
+        # Get stuck documents before deleting
+        stuck_docs = supabase.table("document_uploads")\
+            .select("id, filename")\
+            .eq("client_id", client_id)\
+            .eq("processing_status", "processing")\
+            .execute()
+
+        if not stuck_docs.data:
+            return {
+                "success": True,
+                "message": "No stuck documents to delete",
+                "client_id": client_id
+            }
+
+        # Delete stuck documents
+        deleted_count = len(stuck_docs.data)
+        supabase.table("document_uploads")\
+            .delete()\
+            .eq("client_id", client_id)\
+            .eq("processing_status", "processing")\
+            .execute()
+
+        logger.info(f"🗑️ Deleted {deleted_count} stuck documents for {company_name}")
+
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} stuck documents for {company_name}",
+            "client_id": client_id,
+            "deleted": [{"id": d["id"], "filename": d.get("filename")} for d in stuck_docs.data]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete stuck documents failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
