@@ -17,6 +17,36 @@ BEGIN
     END IF;
 END $$;
 
+-- Add file_size column if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'document_uploads'
+                   AND column_name = 'file_size') THEN
+        ALTER TABLE document_uploads ADD COLUMN file_size BIGINT;
+    END IF;
+END $$;
+
+-- Add file_type column if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'document_uploads'
+                   AND column_name = 'file_type') THEN
+        ALTER TABLE document_uploads ADD COLUMN file_type VARCHAR(100);
+    END IF;
+END $$;
+
+-- Add uploaded_at column if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'document_uploads'
+                   AND column_name = 'uploaded_at') THEN
+        ALTER TABLE document_uploads ADD COLUMN uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    END IF;
+END $$;
+
 -- Add filename column if it doesn't exist (code expects 'filename' not 'file_name')
 DO $$
 BEGIN
