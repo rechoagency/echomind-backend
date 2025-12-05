@@ -157,42 +157,53 @@ class KnowledgeMatchbackService:
     def get_knowledge_base_stats(self, client_id: str) -> Dict[str, Any]:
         """
         Get statistics about client's knowledge base
-        
+
         Args:
             client_id: Client UUID
-            
+
         Returns:
             Stats (document count, chunk count, coverage)
         """
         try:
-            # Count documents
-            docs_response = self.supabase.table('client_documents') \
+            # Count documents (using document_uploads table)
+            docs_response = self.supabase.table('document_uploads') \
                 .select('id', count='exact') \
                 .eq('client_id', client_id) \
+                .eq('processing_status', 'completed') \
                 .execute()
-            
+
             document_count = docs_response.count if docs_response.count else 0
-            
-            # Count embeddings (knowledge chunks)
-            embeddings_response = self.supabase.table('document_embeddings') \
+
+            # Count chunks (using document_chunks table)
+            chunks_response = self.supabase.table('document_chunks') \
                 .select('id', count='exact') \
                 .eq('client_id', client_id) \
                 .execute()
-            
-            chunk_count = embeddings_response.count if embeddings_response.count else 0
-            
+
+            chunk_count = chunks_response.count if chunks_response.count else 0
+
+            # Count vector embeddings
+            embeddings_response = self.supabase.table('vector_embeddings') \
+                .select('id', count='exact') \
+                .eq('client_id', client_id) \
+                .execute()
+
+            embedding_count = embeddings_response.count if embeddings_response.count else 0
+
             return {
                 'documents_uploaded': document_count,
                 'knowledge_chunks': chunk_count,
+                'vector_embeddings': embedding_count,
                 'avg_chunks_per_document': round(chunk_count / document_count, 1) if document_count > 0 else 0,
                 'estimated_coverage_kb': chunk_count * 1  # ~1KB per chunk
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting knowledge base stats: {str(e)}")
             return {
                 'documents_uploaded': 0,
                 'knowledge_chunks': 0,
+                'vector_embeddings': 0,
                 'avg_chunks_per_document': 0,
                 'estimated_coverage_kb': 0
             }
@@ -204,30 +215,24 @@ class KnowledgeMatchbackService:
     ) -> bool:
         """
         Update metadata for a document (useful for categorization)
-        
+
         Args:
             document_id: Document UUID
             metadata: Metadata to add/update
-            
+
         Returns:
             True if successful
         """
         try:
-            # Update document metadata
-            self.supabase.table('client_documents') \
+            # Update document metadata (using document_uploads table)
+            self.supabase.table('document_uploads') \
                 .update({'metadata': metadata}) \
                 .eq('id', document_id) \
                 .execute()
-            
-            # Also update all related embeddings
-            self.supabase.table('document_embeddings') \
-                .update({'metadata': metadata}) \
-                .eq('document_id', document_id) \
-                .execute()
-            
+
             logger.info(f"Updated metadata for document {document_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error updating document metadata: {str(e)}")
             return False
