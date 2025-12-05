@@ -983,3 +983,170 @@ async def delete_stuck_documents(client_id: str):
     except Exception as e:
         logger.error(f"Delete stuck documents failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/rag-diagnostic/{client_id}")
+async def diagnose_rag_system(client_id: str):
+    """
+    Diagnostic endpoint to check if RAG (knowledge base) is working for a client.
+
+    Checks:
+    1. Document embeddings table has data
+    2. RPC function match_knowledge_embeddings exists
+    3. Test query returns results
+    """
+    try:
+        supabase = get_supabase()
+        results = {
+            "client_id": client_id,
+            "checks": {}
+        }
+
+        # Check 1: Does document_embeddings table have data for this client?
+        try:
+            embeddings = supabase.table("document_embeddings")\
+                .select("id, document_id, chunk_index, created_at")\
+                .eq("client_id", client_id)\
+                .limit(5)\
+                .execute()
+            results["checks"]["document_embeddings"] = {
+                "status": "found" if embeddings.data else "empty",
+                "count": len(embeddings.data) if embeddings.data else 0,
+                "sample": embeddings.data[:2] if embeddings.data else []
+            }
+        except Exception as e:
+            results["checks"]["document_embeddings"] = {
+                "status": "error",
+                "error": str(e)
+            }
+
+        # Check 2: Does document_uploads table have completed docs?
+        try:
+            docs = supabase.table("document_uploads")\
+                .select("id, filename, processing_status, chunk_count")\
+                .eq("client_id", client_id)\
+                .execute()
+            results["checks"]["document_uploads"] = {
+                "status": "found" if docs.data else "empty",
+                "count": len(docs.data) if docs.data else 0,
+                "completed": len([d for d in (docs.data or []) if d.get("processing_status") == "completed"]),
+                "total_chunks_reported": sum(d.get("chunk_count", 0) or 0 for d in (docs.data or []))
+            }
+        except Exception as e:
+            results["checks"]["document_uploads"] = {
+                "status": "error",
+                "error": str(e)
+            }
+
+        # Check 3: Does the RPC function exist?
+        try:
+            test_embedding = [0.0] * 1536
+            rpc_result = supabase.rpc(
+                'match_knowledge_embeddings',
+                {
+                    'query_embedding': test_embedding,
+                    'client_id': client_id,
+                    'similarity_threshold': 0.0,  # Very low to get any results
+                    'match_count': 3
+                }
+            ).execute()
+            results["checks"]["rpc_function"] = {
+                "status": "exists",
+                "test_results_count": len(rpc_result.data) if rpc_result.data else 0
+            }
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "function" in error_msg:
+                results["checks"]["rpc_function"] = {
+                    "status": "missing",
+                    "error": "Function match_knowledge_embeddings not found",
+                    "fix": "Run sql/match_knowledge_embeddings.sql in Supabase SQL Editor"
+                }
+            else:
+                results["checks"]["rpc_function"] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+
+        # Summary
+        embeddings_ok = results["checks"].get("document_embeddings", {}).get("status") == "found"
+        rpc_ok = results["checks"].get("rpc_function", {}).get("status") == "exists"
+
+        if embeddings_ok and rpc_ok:
+            results["rag_status"] = "WORKING"
+            results["message"] = "RAG system is configured and has embeddings"
+        elif rpc_ok and not embeddings_ok:
+            results["rag_status"] = "NO_EMBEDDINGS"
+            results["message"] = "RPC function exists but no embeddings found - documents may not have been vectorized"
+        elif not rpc_ok:
+            results["rag_status"] = "RPC_MISSING"
+            results["message"] = "match_knowledge_embeddings function not found - run migration SQL"
+        else:
+            results["rag_status"] = "NOT_CONFIGURED"
+            results["message"] = "RAG system needs setup"
+
+        return results
+
+    except Exception as e:
+        logger.error(f"RAG diagnostic failed: {e}")
+        return {"error": str(e)}
+
+
+@router.post("/test-voice-crawl")
+async def test_voice_crawl_single_subreddit(request: dict):
+    """
+    Test voice crawl for a SINGLE subreddit (quick test, ~30 seconds)
+
+    Body:
+    {
+        "client_id": "uuid",
+        "subreddit": "HomeImprovement"
+    }
+
+    This crawls just one subreddit with reduced limits for testing.
+    """
+    import asyncio
+
+    try:
+        client_id = request.get("client_id")
+        subreddit = request.get("subreddit")
+
+        if not client_id or not subreddit:
+            return {"error": "client_id and subreddit are required"}
+
+        # Clean subreddit name
+        subreddit = subreddit.replace("r/", "").strip()
+
+        logger.info(f"🎤 Testing voice crawl for r/{subreddit} (client: {client_id})")
+
+        # Import and create a lightweight voice worker
+        from workers.voice_database_worker import VoiceDatabaseWorker
+
+        worker = VoiceDatabaseWorker()
+        # Reduce limits for quick test
+        worker.TOP_USERS_PER_SUBREDDIT = 20  # Only 20 users instead of 1000
+        worker.COMMENTS_PER_USER = 10  # Only 10 comments instead of 50
+
+        # Run the voice analysis
+        profile = await worker.analyze_subreddit_voice(subreddit, client_id)
+
+        return {
+            "success": True,
+            "subreddit": subreddit,
+            "client_id": client_id,
+            "profile_created": True,
+            "profile_summary": {
+                "sample_size": profile.get("sample_size", 0),
+                "tone": profile.get("tone", "unknown"),
+                "formality_level": profile.get("formality_level", "unknown"),
+                "uses_emojis": profile.get("uses_emojis", "unknown"),
+                "common_phrases": profile.get("common_phrases", [])[:5]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Voice crawl test failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
