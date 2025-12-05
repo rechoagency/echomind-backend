@@ -1342,3 +1342,126 @@ async def reprocess_document_embeddings(client_id: str):
             "success": False,
             "error": str(e)
         }
+
+
+@router.post("/populate-embeddings/{client_id}")
+async def populate_embeddings_from_chunks(client_id: str):
+    """
+    SIMPLE endpoint to populate document_embeddings from document_chunks.
+
+    This is the fix for RAG not working - chunks exist but embeddings don't.
+
+    Process:
+    1. Read chunks from document_chunks for this client
+    2. Generate OpenAI embeddings for each chunk_text
+    3. Insert into document_embeddings table (which RAG queries)
+    """
+    from openai import OpenAI
+    import os
+
+    try:
+        supabase = get_supabase()
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        company_name = client.data[0].get("company_name") if client.data else "Unknown"
+
+        logger.info(f"🔄 Populating embeddings for {company_name} ({client_id})")
+
+        # Get chunks from document_chunks
+        chunks = supabase.table("document_chunks")\
+            .select("id, document_id, chunk_text, chunk_index, client_id")\
+            .eq("client_id", client_id)\
+            .order("chunk_index")\
+            .execute()
+
+        if not chunks.data:
+            return {
+                "success": False,
+                "error": "No chunks found in document_chunks table",
+                "client_id": client_id
+            }
+
+        logger.info(f"📄 Found {len(chunks.data)} chunks in document_chunks")
+
+        # Get document filenames for metadata
+        doc_ids = list(set(c["document_id"] for c in chunks.data))
+        docs = supabase.table("document_uploads")\
+            .select("id, filename")\
+            .in_("id", doc_ids)\
+            .execute()
+
+        doc_filenames = {d["id"]: d["filename"] for d in (docs.data or [])}
+
+        embeddings_created = 0
+        skipped = 0
+        errors = []
+
+        for chunk in chunks.data:
+            document_id = chunk["document_id"]
+            chunk_text = chunk["chunk_text"]
+            chunk_index = chunk["chunk_index"]
+            filename = doc_filenames.get(document_id, "unknown")
+
+            # Check if embedding already exists
+            existing = supabase.table("document_embeddings")\
+                .select("id")\
+                .eq("document_id", document_id)\
+                .eq("chunk_index", chunk_index)\
+                .execute()
+
+            if existing.data:
+                skipped += 1
+                continue
+
+            # Generate embedding
+            try:
+                response = openai_client.embeddings.create(
+                    model="text-embedding-ada-002",
+                    input=chunk_text[:8000]
+                )
+                embedding = response.data[0].embedding
+
+                # Insert into document_embeddings
+                embedding_record = {
+                    "document_id": document_id,
+                    "client_id": client_id,
+                    "chunk_text": chunk_text,
+                    "chunk_index": chunk_index,
+                    "embedding": embedding,
+                    "metadata": {
+                        "filename": filename,
+                        "char_count": len(chunk_text),
+                        "source": "populate_embeddings_endpoint"
+                    },
+                    "created_at": datetime.utcnow().isoformat()
+                }
+
+                supabase.table("document_embeddings").insert(embedding_record).execute()
+                embeddings_created += 1
+                logger.info(f"  ✅ Created embedding for chunk {chunk_index} of {filename}")
+
+            except Exception as e:
+                error_msg = f"Chunk {chunk_index}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(f"  ❌ {error_msg}")
+
+        logger.info(f"✅ Populate embeddings complete: {embeddings_created} created, {skipped} skipped")
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "company_name": company_name,
+            "chunks_found": len(chunks.data),
+            "embeddings_created": embeddings_created,
+            "skipped_existing": skipped,
+            "errors": errors
+        }
+
+    except Exception as e:
+        logger.error(f"Populate embeddings failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
