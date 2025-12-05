@@ -174,28 +174,62 @@ class KnowledgeMatchbackService:
 
             document_count = docs_response.count if docs_response.count else 0
 
-            # Count chunks (using document_chunks table)
-            chunks_response = self.supabase.table('document_chunks') \
-                .select('id', count='exact') \
-                .eq('client_id', client_id) \
-                .execute()
+            # Count chunks from document_chunks table
+            chunk_count = 0
+            try:
+                chunks_response = self.supabase.table('document_chunks') \
+                    .select('id', count='exact') \
+                    .eq('client_id', client_id) \
+                    .execute()
+                chunk_count = chunks_response.count if chunks_response.count else 0
+            except Exception:
+                pass  # Table might not exist
 
-            chunk_count = chunks_response.count if chunks_response.count else 0
+            # Count embeddings from vector_embeddings table
+            vector_count = 0
+            try:
+                vector_response = self.supabase.table('vector_embeddings') \
+                    .select('id', count='exact') \
+                    .eq('client_id', client_id) \
+                    .execute()
+                vector_count = vector_response.count if vector_response.count else 0
+            except Exception:
+                pass  # Table might not exist
 
-            # Count vector embeddings
-            embeddings_response = self.supabase.table('vector_embeddings') \
-                .select('id', count='exact') \
-                .eq('client_id', client_id) \
-                .execute()
+            # Also count embeddings from document_embeddings table (legacy/alternate)
+            doc_emb_count = 0
+            try:
+                doc_emb_response = self.supabase.table('document_embeddings') \
+                    .select('id', count='exact') \
+                    .eq('client_id', client_id) \
+                    .execute()
+                doc_emb_count = doc_emb_response.count if doc_emb_response.count else 0
+            except Exception:
+                pass  # Table might not exist
 
-            embedding_count = embeddings_response.count if embeddings_response.count else 0
+            # Use whichever has data
+            embedding_count = max(vector_count, doc_emb_count)
+            total_chunks = max(chunk_count, embedding_count)
+
+            # If no chunks in tables but documents report chunk_count, get from document_uploads
+            if total_chunks == 0 and document_count > 0:
+                try:
+                    docs_with_chunks = self.supabase.table('document_uploads') \
+                        .select('chunk_count') \
+                        .eq('client_id', client_id) \
+                        .eq('processing_status', 'completed') \
+                        .execute()
+                    if docs_with_chunks.data:
+                        total_chunks = sum(d.get('chunk_count', 0) or 0 for d in docs_with_chunks.data)
+                except Exception:
+                    pass
 
             return {
                 'documents_uploaded': document_count,
-                'knowledge_chunks': chunk_count,
+                'knowledge_chunks': total_chunks,
                 'vector_embeddings': embedding_count,
-                'avg_chunks_per_document': round(chunk_count / document_count, 1) if document_count > 0 else 0,
-                'estimated_coverage_kb': chunk_count * 1  # ~1KB per chunk
+                'avg_chunks_per_document': round(total_chunks / document_count, 1) if document_count > 0 else 0,
+                'estimated_coverage_kb': total_chunks * 1  # ~1KB per chunk
             }
 
         except Exception as e:
