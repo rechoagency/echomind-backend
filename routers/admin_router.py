@@ -544,13 +544,24 @@ async def run_worker_pipeline(background_tasks: BackgroundTasks, request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class TestContentRequest(BaseModel):
+    client_id: str = None
+    count: int = 2
+
+
 @router.post("/test-content-generation")
-async def test_content_generation_sync():
+async def test_content_generation_sync(request: TestContentRequest = None):
     """
     Synchronous test endpoint for content generation.
     Runs content generation directly (not in background) so we can see errors.
 
     This is for debugging only - returns full result including any errors.
+
+    Body (optional):
+    {
+        "client_id": "uuid",  # If omitted, uses first active client
+        "count": 2            # Number of opportunities to process (default 2)
+    }
     """
     import traceback
 
@@ -563,8 +574,23 @@ async def test_content_generation_sync():
         # Create worker instance
         worker = ContentGenerationWorker()
 
-        # Run synchronously with Mira client
-        client_id = "3cee3b35-33e2-4a0c-8a78-dbccffbca434"
+        # Get client_id from request or find first active client
+        client_id = request.client_id if request and request.client_id else None
+        count = request.count if request and request.count else 2
+
+        if not client_id:
+            # Find first active client with opportunities
+            clients = worker.supabase.table("clients").select("client_id, company_name").eq("subscription_status", "active").limit(5).execute()
+            for c in (clients.data or []):
+                opps = worker.supabase.table("opportunities").select("opportunity_id").eq("client_id", c["client_id"]).limit(1).execute()
+                if opps.data:
+                    client_id = c["client_id"]
+                    logger.info(f"🧪 Using client: {c['company_name']} ({client_id})")
+                    break
+
+            if not client_id:
+                return {"success": False, "error": "No active clients with opportunities found"}
+
         logger.info(f"🧪 Calling process_all_opportunities for client {client_id}")
 
         # First, let's check how many opportunities exist using worker's supabase
@@ -576,9 +602,9 @@ async def test_content_generation_sync():
         worker_query = worker.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found").eq("client_id", client_id).order("date_found", desc=True).limit(10).execute()
         worker_query_count = len(worker_query.data) if worker_query.data else 0
 
-        # Directly call generate_content_for_client with just 2 opportunities to avoid timeout
-        # Take first 2 opportunities for quick test
-        test_opps = worker_query.data[:2] if worker_query.data else []
+        # Directly call generate_content_for_client with limited opportunities to avoid timeout
+        # Take first 'count' opportunities for quick test
+        test_opps = worker_query.data[:count] if worker_query.data else []
 
         if test_opps:
             result = worker.generate_content_for_client(

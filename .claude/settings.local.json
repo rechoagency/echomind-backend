@@ -5,7 +5,15 @@
       "Bash(python3 -c:*)",
       "Bash(cat:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(timeout 10 python3:*)",
+      "Bash(find:*)",
+      "Bash(unzip:*)",
+      "Bash(TOUCHSTONE_ID=\"999ac53f-0217-4234-b522-9bdfe9ff3bfd\")",
+      "Bash(for file in \"17981_NPS_Promotors_Export.csv\" \"17981_PublishedQ&A_Export.csv\")",
+      "Bash(do)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []
