@@ -1150,3 +1150,195 @@ async def test_voice_crawl_single_subreddit(request: dict):
             "success": False,
             "error": str(e)
         }
+
+
+@router.post("/reprocess-embeddings/{client_id}")
+async def reprocess_document_embeddings(client_id: str):
+    """
+    Reprocess documents from document_uploads and generate embeddings in document_embeddings.
+
+    This fixes the gap where documents were uploaded but embeddings weren't created.
+
+    Process:
+    1. Get all completed documents from document_uploads
+    2. Try to get chunks from document_chunks OR vector_embeddings
+    3. Generate OpenAI embeddings for each chunk
+    4. Insert into document_embeddings table (which RAG queries)
+    """
+    from openai import OpenAI
+    import os
+
+    try:
+        supabase = get_supabase()
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            return {"error": f"Client {client_id} not found"}
+        company_name = client.data[0].get("company_name")
+
+        logger.info(f"🔄 Reprocessing embeddings for {company_name} ({client_id})")
+
+        # Get completed documents from document_uploads
+        docs = supabase.table("document_uploads")\
+            .select("id, filename, file_type, chunk_count, processing_status")\
+            .eq("client_id", client_id)\
+            .eq("processing_status", "completed")\
+            .execute()
+
+        if not docs.data:
+            return {
+                "success": False,
+                "error": "No completed documents found in document_uploads",
+                "client_id": client_id
+            }
+
+        results = []
+        total_embeddings_created = 0
+        chunks_sources_checked = []
+
+        for doc in docs.data:
+            doc_id = doc["id"]
+            filename = doc["filename"]
+            chunks_data = []
+
+            try:
+                # Try document_chunks first
+                try:
+                    chunks = supabase.table("document_chunks")\
+                        .select("id, chunk_text, chunk_index")\
+                        .eq("document_id", doc_id)\
+                        .order("chunk_index")\
+                        .execute()
+                    if chunks.data:
+                        chunks_data = chunks.data
+                        chunks_sources_checked.append("document_chunks")
+                except Exception:
+                    pass
+
+                # Try vector_embeddings (already has chunks with embeddings in different format)
+                if not chunks_data:
+                    try:
+                        vec_emb = supabase.table("vector_embeddings")\
+                            .select("id, chunk_id, embedding")\
+                            .eq("client_id", client_id)\
+                            .limit(50)\
+                            .execute()
+                        if vec_emb.data:
+                            # Get chunk text from document_chunks using chunk_id
+                            for ve in vec_emb.data:
+                                chunk_id = ve.get("chunk_id")
+                                if chunk_id:
+                                    chunk_data = supabase.table("document_chunks")\
+                                        .select("chunk_text, chunk_index, document_id")\
+                                        .eq("id", chunk_id)\
+                                        .execute()
+                                    if chunk_data.data and chunk_data.data[0].get("document_id") == doc_id:
+                                        chunks_data.append({
+                                            "chunk_text": chunk_data.data[0]["chunk_text"],
+                                            "chunk_index": chunk_data.data[0]["chunk_index"],
+                                            "existing_embedding": ve.get("embedding")
+                                        })
+                            if chunks_data:
+                                chunks_sources_checked.append("vector_embeddings+document_chunks")
+                    except Exception as ve_err:
+                        logger.warning(f"vector_embeddings check failed: {ve_err}")
+
+                if not chunks_data:
+                    logger.warning(f"No chunks found for document {filename} ({doc_id})")
+                    results.append({
+                        "document_id": doc_id,
+                        "filename": filename,
+                        "status": "skipped",
+                        "reason": "No chunks found in document_chunks or vector_embeddings"
+                    })
+                    continue
+
+                embeddings_created = 0
+
+                for chunk in chunks_data:
+                    chunk_text = chunk.get("chunk_text", "")
+                    chunk_index = chunk.get("chunk_index", 0)
+
+                    if not chunk_text or len(chunk_text) < 10:
+                        continue
+
+                    # Check if embedding already exists in document_embeddings
+                    existing = supabase.table("document_embeddings")\
+                        .select("id")\
+                        .eq("document_id", doc_id)\
+                        .eq("chunk_index", chunk_index)\
+                        .execute()
+
+                    if existing.data:
+                        logger.info(f"  Embedding already exists for chunk {chunk_index}")
+                        continue
+
+                    # Use existing embedding if available, otherwise generate new one
+                    embedding = chunk.get("existing_embedding")
+                    if not embedding:
+                        try:
+                            response = openai_client.embeddings.create(
+                                model="text-embedding-ada-002",
+                                input=chunk_text[:8000]
+                            )
+                            embedding = response.data[0].embedding
+                        except Exception as emb_error:
+                            logger.error(f"Error creating embedding for chunk {chunk_index}: {emb_error}")
+                            continue
+
+                    # Insert into document_embeddings
+                    embedding_record = {
+                        "document_id": doc_id,
+                        "client_id": client_id,
+                        "chunk_text": chunk_text,
+                        "chunk_index": chunk_index,
+                        "embedding": embedding,
+                        "metadata": {
+                            "filename": filename,
+                            "char_count": len(chunk_text),
+                            "source": "reprocess_endpoint"
+                        },
+                        "created_at": datetime.utcnow().isoformat()
+                    }
+
+                    supabase.table("document_embeddings").insert(embedding_record).execute()
+                    embeddings_created += 1
+                    total_embeddings_created += 1
+
+                results.append({
+                    "document_id": doc_id,
+                    "filename": filename,
+                    "status": "success",
+                    "chunks_found": len(chunks_data),
+                    "embeddings_created": embeddings_created
+                })
+
+            except Exception as doc_error:
+                logger.error(f"Error processing document {filename}: {doc_error}")
+                results.append({
+                    "document_id": doc_id,
+                    "filename": filename,
+                    "status": "error",
+                    "error": str(doc_error)
+                })
+
+        logger.info(f"✅ Reprocessing complete: {total_embeddings_created} embeddings created")
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "company_name": company_name,
+            "documents_processed": len(results),
+            "total_embeddings_created": total_embeddings_created,
+            "chunks_sources_checked": list(set(chunks_sources_checked)),
+            "results": results
+        }
+
+    except Exception as e:
+        logger.error(f"Reprocess embeddings failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
