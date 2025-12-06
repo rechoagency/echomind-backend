@@ -253,15 +253,14 @@ Format as valid JSON only."""}
                 "client_id": client_id,
                 "subreddit": subreddit_name,
                 "voice_profile": profile,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
+                "created_at": datetime.utcnow().isoformat()
             }
-            
-            # Upsert to subreddit_voice_profiles table
+
+            # Upsert to voice_profiles table
             self.supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
-            
+
             logger.info(f"Saved voice profile for r/{subreddit_name}")
-            
+
         except Exception as e:
             logger.error(f"Error saving voice profile: {e}")
             raise
