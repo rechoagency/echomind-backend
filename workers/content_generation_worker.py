@@ -478,16 +478,32 @@ Write the response now:"""
                 })
                 
             except Exception as e:
+                import traceback
+                error_tb = traceback.format_exc()
                 logger.error(f"❌ Error generating content #{i+1}: {e}")
+                logger.error(f"Traceback: {error_tb}")
+                generated_content.append({
+                    'type': 'error',
+                    'error': str(e),
+                    'traceback': error_tb,
+                    'opportunity_id': opportunity.get('opportunity_id'),
+                    'thread_title': opportunity.get('thread_title', '')
+                })
                 continue
-        
+
         logger.info(f"\n✅ Generated {len(generated_content)} pieces of content")
         logger.info(f"{'='*70}\n")
-        
+
+        # Separate successful and error items
+        successes = [c for c in generated_content if c.get('type') != 'error']
+        errors = [c for c in generated_content if c.get('type') == 'error']
+
         return {
             "success": True,
-            "generated": len(generated_content),
-            "content": generated_content
+            "generated": len(successes),
+            "errors": len(errors),
+            "content": successes,
+            "error_details": errors[:3] if errors else []  # Include first 3 errors for debugging
         }
     
     def log_content_delivery(
