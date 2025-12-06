@@ -1211,9 +1211,17 @@ async def create_voice_profile_manual(request: dict):
         inserted_data = None
         last_error = None
 
+        # First, try to delete any existing profile for this client/subreddit
+        try:
+            supabase.table("voice_profiles").delete().eq("client_id", client_id).eq("subreddit", subreddit).execute()
+            logger.info(f"Deleted existing voice profile for r/{subreddit}")
+        except Exception as e:
+            logger.warning(f"No existing profile to delete or delete failed: {e}")
+
         for i, data in enumerate(column_attempts):
             try:
-                supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+                # Use insert instead of upsert (since we just deleted any existing)
+                supabase.table("voice_profiles").insert(data).execute()
                 inserted_data = data
                 logger.info(f"✅ Created voice profile with attempt {i+1} for r/{subreddit}")
                 break
