@@ -1093,9 +1093,9 @@ async def diagnose_rag_system(client_id: str):
 
 
 @router.post("/test-voice-crawl")
-async def test_voice_crawl_single_subreddit(request: dict):
+async def test_voice_crawl_single_subreddit(request: dict, background_tasks: BackgroundTasks):
     """
-    Test voice crawl for a SINGLE subreddit (quick test, ~30 seconds)
+    Test voice crawl for a SINGLE subreddit (runs in background).
 
     Body:
     {
@@ -1104,9 +1104,8 @@ async def test_voice_crawl_single_subreddit(request: dict):
     }
 
     This crawls just one subreddit with reduced limits for testing.
+    Returns immediately, crawl runs in background.
     """
-    import asyncio
-
     try:
         client_id = request.get("client_id")
         subreddit = request.get("subreddit")
@@ -1117,35 +1116,110 @@ async def test_voice_crawl_single_subreddit(request: dict):
         # Clean subreddit name
         subreddit = subreddit.replace("r/", "").strip()
 
-        logger.info(f"🎤 Testing voice crawl for r/{subreddit} (client: {client_id})")
+        logger.info(f"🎤 Starting background voice crawl for r/{subreddit} (client: {client_id})")
 
-        # Import and create a lightweight voice worker
-        from workers.voice_database_worker import VoiceDatabaseWorker
+        async def run_voice_crawl():
+            try:
+                from workers.voice_database_worker import VoiceDatabaseWorker
 
-        worker = VoiceDatabaseWorker()
-        # Reduce limits for quick test
-        worker.TOP_USERS_PER_SUBREDDIT = 20  # Only 20 users instead of 1000
-        worker.COMMENTS_PER_USER = 10  # Only 10 comments instead of 50
+                worker = VoiceDatabaseWorker()
+                worker.TOP_USERS_PER_SUBREDDIT = 10  # Very small for quick test
+                worker.COMMENTS_PER_USER = 5
 
-        # Run the voice analysis
-        profile = await worker.analyze_subreddit_voice(subreddit, client_id)
+                await worker.analyze_subreddit_voice(subreddit, client_id)
+                logger.info(f"✅ Voice crawl complete for r/{subreddit}")
+            except Exception as e:
+                logger.error(f"Background voice crawl failed: {e}")
+
+        background_tasks.add_task(run_voice_crawl)
 
         return {
             "success": True,
-            "subreddit": subreddit,
+            "message": f"Voice crawl started in background for r/{subreddit}",
             "client_id": client_id,
-            "profile_created": True,
-            "profile_summary": {
-                "sample_size": profile.get("sample_size", 0),
-                "tone": profile.get("tone", "unknown"),
-                "formality_level": profile.get("formality_level", "unknown"),
-                "uses_emojis": profile.get("uses_emojis", "unknown"),
-                "common_phrases": profile.get("common_phrases", [])[:5]
-            }
+            "subreddit": subreddit,
+            "note": "Check /api/admin/pipeline-status in ~60 seconds to see if profile was created"
         }
 
     except Exception as e:
         logger.error(f"Voice crawl test failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/create-voice-profile")
+async def create_voice_profile_manual(request: dict):
+    """
+    Create a voice profile manually (without Reddit crawling).
+
+    This is useful for testing the pipeline when Reddit crawling is slow.
+
+    Body:
+    {
+        "client_id": "uuid",
+        "subreddit": "HomeImprovement"
+    }
+    """
+    try:
+        supabase = get_supabase()
+
+        client_id = request.get("client_id")
+        subreddit = request.get("subreddit")
+
+        if not client_id or not subreddit:
+            return {"error": "client_id and subreddit are required"}
+
+        subreddit = subreddit.replace("r/", "").strip().lower()
+
+        # Create a realistic voice profile without crawling
+        voice_profile = {
+            "subreddit": subreddit,
+            "sample_size": 100,
+            "avg_sentence_length": 14.5,
+            "avg_word_length": 4.8,
+            "common_phrases": ["honestly", "in my experience", "hope this helps", "just my two cents", "FWIW"],
+            "typo_frequency": 0.02,
+            "uses_emojis": "occasional",
+            "exclamation_frequency": 0.12,
+            "question_frequency": 0.18,
+            "tone": "helpful, casual, knowledgeable",
+            "grammar_style": "informal but clear, conversational",
+            "sentiment_distribution": {"helpful": 45, "neutral": 30, "frustrated": 15, "enthusiastic": 10},
+            "signature_idioms": ["DIY", "pro tip", "home depot", "contractor", "code"],
+            "formality_level": "LOW",
+            "voice_description": f"r/{subreddit} community members are helpful DIY enthusiasts who share practical advice. Writing is casual but knowledgeable.",
+            "analyzed_at": datetime.utcnow().isoformat(),
+            "source": "manual_creation"
+        }
+
+        # Insert into voice_profiles
+        data = {
+            "client_id": client_id,
+            "subreddit": subreddit,
+            "voice_profile": voice_profile,
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+        supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+
+        logger.info(f"✅ Created manual voice profile for r/{subreddit}")
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "subreddit": subreddit,
+            "profile_created": True,
+            "profile_summary": {
+                "tone": voice_profile["tone"],
+                "formality_level": voice_profile["formality_level"],
+                "common_phrases": voice_profile["common_phrases"]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Manual voice profile creation failed: {e}")
         return {
             "success": False,
             "error": str(e)
