@@ -70,35 +70,60 @@ async def trigger_voice_database_worker(
     """
     Manually trigger voice database worker
     Crawls Reddit to analyze voice patterns of top Redditors
-    
+
     Args:
         client_id: Optional client filter (if not provided, processes all clients)
+
+    Returns immediately and runs crawler in background.
     """
-    from workers.voice_database_worker import build_client_voice_database
-    from supabase_client import get_supabase_client
-    
     started_at = datetime.utcnow().isoformat()
-    
-    async def run_voice_worker():
-        if client_id:
-            # Run for specific client
-            await build_client_voice_database(client_id)
-        else:
-            # Run for all clients
-            supabase = get_supabase_client()
-            clients_response = supabase.table("clients").select("client_id").execute()
-            for client in clients_response.data:
-                try:
-                    await build_client_voice_database(client['client_id'])
-                except Exception as e:
-                    print(f"Error building voice DB for {client['client_id']}: {e}")
-    
-    # Run in background
-    background_tasks.add_task(run_voice_worker)
-    
+
+    # Capture client_id in closure for background task
+    target_client_id = client_id
+
+    def run_voice_worker_sync():
+        """Sync wrapper that runs async voice worker in new event loop"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            from workers.voice_database_worker import build_client_voice_database
+            from supabase_client import get_supabase_client
+
+            # Create new event loop for background thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                if target_client_id:
+                    logger.info(f"🎤 Voice crawler starting for client {target_client_id}")
+                    loop.run_until_complete(build_client_voice_database(target_client_id))
+                    logger.info(f"✅ Voice crawler completed for client {target_client_id}")
+                else:
+                    logger.info("🎤 Voice crawler starting for ALL clients")
+                    supabase = get_supabase_client()
+                    clients_response = supabase.table("clients").select("client_id").execute()
+                    for client in clients_response.data:
+                        try:
+                            loop.run_until_complete(build_client_voice_database(client['client_id']))
+                            logger.info(f"✅ Voice crawler completed for client {client['client_id']}")
+                        except Exception as e:
+                            logger.error(f"❌ Error building voice DB for {client['client_id']}: {e}")
+                    logger.info("✅ Voice crawler completed for ALL clients")
+            finally:
+                loop.close()
+
+        except Exception as e:
+            logger.error(f"❌ Voice worker failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Add sync wrapper to background tasks - returns immediately
+    background_tasks.add_task(run_voice_worker_sync)
+
     return WorkerResponse(
         status="started",
-        message=f"Voice database worker started for {'client ' + client_id if client_id else 'all clients'}",
+        message=f"Voice database worker started for {'client ' + target_client_id if target_client_id else 'all clients'}",
         started_at=started_at,
         worker_name="voice_database_worker"
     )
