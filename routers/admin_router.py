@@ -1314,25 +1314,58 @@ async def test_rag_search(request: dict):
         if not client_id:
             return {"error": "client_id required"}
 
-        from services.knowledge_matchback_service import KnowledgeMatchbackService
+        # Direct test with embedding
+        from openai import OpenAI
+        import os
+
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         supabase = get_supabase()
 
-        service = KnowledgeMatchbackService(supabase)
-
-        insights = service.match_opportunity_to_knowledge(
-            opportunity_text=query,
-            client_id=client_id,
-            similarity_threshold=threshold,
-            max_insights=5
+        # Generate embedding
+        embedding_response = openai_client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query[:8000]
         )
+        query_embedding = embedding_response.data[0].embedding
+        embedding_dim = len(query_embedding)
+
+        # Direct RPC call
+        rpc_result = supabase.rpc(
+            'match_knowledge_embeddings',
+            {
+                'query_embedding': query_embedding,
+                'client_id': client_id,
+                'similarity_threshold': threshold,
+                'match_count': 5
+            }
+        ).execute()
+
+        # Also test zero threshold to verify function works
+        rpc_result_zero = supabase.rpc(
+            'match_knowledge_embeddings',
+            {
+                'query_embedding': query_embedding,
+                'client_id': client_id,
+                'similarity_threshold': 0.0,  # Get ALL matches
+                'match_count': 5
+            }
+        ).execute()
 
         return {
             "success": True,
             "client_id": client_id,
             "query": query,
             "threshold": threshold,
-            "insights_found": len(insights),
-            "insights": insights
+            "embedding_dimensions": embedding_dim,
+            "insights_found_at_threshold": len(rpc_result.data) if rpc_result.data else 0,
+            "insights_found_at_zero": len(rpc_result_zero.data) if rpc_result_zero.data else 0,
+            "insights_at_threshold": rpc_result.data or [],
+            "insights_at_zero": [
+                {
+                    "chunk_text": r.get("chunk_text", "")[:200],
+                    "similarity": r.get("similarity")
+                } for r in (rpc_result_zero.data or [])
+            ]
         }
 
     except Exception as e:
