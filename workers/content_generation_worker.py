@@ -231,11 +231,12 @@ class ContentGenerationWorker:
         
         # Add voice profile guidelines
         if voice_profile:
-            formality = voice_profile.get("formality_score", 0.5)
-            lowercase_pct = voice_profile.get("lowercase_start_pct", 0)
-            exclamation_pct = voice_profile.get("exclamation_usage_pct", 0)
-            dominant_tone = voice_profile.get("dominant_tone", "supportive")
-            
+            # Use defaults if values are None (database may return None for empty columns)
+            formality = voice_profile.get("formality_score") or 0.3  # Default casual
+            lowercase_pct = voice_profile.get("lowercase_start_pct") or 25
+            exclamation_pct = voice_profile.get("exclamation_usage_pct") or 8
+            dominant_tone = voice_profile.get("dominant_tone") or "supportive, helpful"
+
             prompt += f"""**Community Voice Style (r/{subreddit}):**
 - Formality: {"Casual and conversational" if formality < 0.4 else "Moderately formal" if formality < 0.7 else "Professional"}
 - Tone: {dominant_tone}
