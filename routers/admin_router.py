@@ -1294,6 +1294,53 @@ async def create_voice_profile_manual(request: dict):
         }
 
 
+@router.post("/test-rag-search")
+async def test_rag_search(request: dict):
+    """
+    Test RAG knowledge base search with a query.
+
+    Body:
+    {
+        "client_id": "uuid",
+        "query": "How do electric fireplaces compare to gas?",
+        "threshold": 0.50
+    }
+    """
+    try:
+        client_id = request.get("client_id")
+        query = request.get("query", "electric fireplace heating efficiency")
+        threshold = request.get("threshold", 0.50)
+
+        if not client_id:
+            return {"error": "client_id required"}
+
+        from services.knowledge_matchback_service import KnowledgeMatchbackService
+        supabase = get_supabase()
+
+        service = KnowledgeMatchbackService(supabase)
+
+        insights = service.match_opportunity_to_knowledge(
+            opportunity_text=query,
+            client_id=client_id,
+            similarity_threshold=threshold,
+            max_insights=5
+        )
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "query": query,
+            "threshold": threshold,
+            "insights_found": len(insights),
+            "insights": insights
+        }
+
+    except Exception as e:
+        logger.error(f"RAG search test failed: {e}")
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
 @router.get("/search-opportunities/{client_id}")
 async def search_opportunities(client_id: str, keywords: str = None, limit: int = 20):
     """

@@ -471,6 +471,8 @@ Write the response now:"""
                     'subreddit': subreddit,
                     'brand_mentioned': mention_brand,
                     'product_mentioned': mention_product,
+                    'knowledge_insights_used': len(knowledge_insights),
+                    'knowledge_excerpts': [k.get('excerpt', '')[:100] for k in knowledge_insights[:2]] if knowledge_insights else [],
                     'assigned_profile': opportunity.get('profile_username', 'NO_PROFILE'),
                     'profile_karma': opportunity.get('profile_karma', 0),
                     'opportunity_id': opportunity.get('opportunity_id'),
