@@ -4,6 +4,7 @@ Scans Reddit and creates opportunities directly (not brand_mentions)
 """
 
 import os
+import re
 import praw
 from openai import OpenAI
 from datetime import datetime, timedelta
@@ -14,6 +15,70 @@ import uuid
 # Initialize clients
 supabase = get_supabase_client()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def normalize_word(word):
+    """
+    Simple stemming - remove common suffixes for better matching.
+    Handles: plurals (s, es, ies), ing, ed, ly
+    """
+    word = word.lower().strip()
+
+    # Handle special cases
+    if word.endswith('ies') and len(word) > 4:
+        return word[:-3] + 'y'  # fireplaces -> fireplace, babies -> baby
+    if word.endswith('es') and len(word) > 3:
+        # Check for words like "fireplaces" -> "fireplace"
+        if word[:-2].endswith(('c', 's', 'x', 'z', 'sh', 'ch')):
+            return word[:-2]
+        return word[:-1]  # Just remove the 's'
+    if word.endswith('s') and len(word) > 2 and not word.endswith('ss'):
+        return word[:-1]
+    if word.endswith('ing') and len(word) > 4:
+        return word[:-3]
+    if word.endswith('ed') and len(word) > 3:
+        return word[:-2]
+
+    return word
+
+
+def keyword_matches(keyword, text):
+    """
+    Check if keyword matches text using flexible matching:
+    1. Direct substring match
+    2. Normalized (stemmed) word matching for plural/singular
+
+    Returns True if keyword matches text.
+    """
+    keyword_lower = keyword.lower()
+    text_lower = text.lower()
+
+    # Direct substring match (original behavior)
+    if keyword_lower in text_lower:
+        return True
+
+    # Normalize the keyword and check each word in text
+    keyword_normalized = normalize_word(keyword_lower)
+
+    # For multi-word keywords, check if all words match
+    keyword_words = keyword_lower.split()
+    if len(keyword_words) > 1:
+        # Multi-word keyword: check if all words appear (normalized)
+        text_words = set(normalize_word(w) for w in re.findall(r'\w+', text_lower))
+        keyword_words_normalized = [normalize_word(w) for w in keyword_words]
+        return all(kw in text_words or any(kw in tw for tw in text_words) for kw in keyword_words_normalized)
+
+    # Single word keyword: check normalized version against text words
+    text_words = re.findall(r'\w+', text_lower)
+    for word in text_words:
+        word_normalized = normalize_word(word)
+        # Check both directions: keyword stem in word, or word stem in keyword
+        if keyword_normalized == word_normalized:
+            return True
+        if keyword_normalized in word or word_normalized in keyword_lower:
+            return True
+
+    return False
 
 reddit = praw.Reddit(
     client_id=os.getenv("REDDIT_CLIENT_ID"),
@@ -32,29 +97,52 @@ def get_active_clients():
     return response.data
 
 
+def get_existing_thread_urls(client_id):
+    """Get set of existing thread URLs for a client to avoid duplicates"""
+    try:
+        result = supabase.table("opportunities")\
+            .select("thread_url")\
+            .eq("client_id", client_id)\
+            .execute()
+        return set(opp["thread_url"] for opp in result.data) if result.data else set()
+    except Exception as e:
+        print(f"    Warning: Could not fetch existing opportunities: {e}")
+        return set()
+
+
 def scan_for_opportunities(client_id, company_name, subreddits, keywords):
     """Scan subreddits and create opportunities"""
     opportunities_found = []
-    
+
+    # Get existing thread URLs to avoid duplicates
+    existing_urls = get_existing_thread_urls(client_id)
+    print(f"  Found {len(existing_urls)} existing opportunities to skip")
+
     print(f"  Scanning {len(subreddits)} subreddits for opportunities...")
-    
+
     for subreddit_name in subreddits[:10]:  # Process up to 10 subreddits
         # Remove 'r/' prefix if present
         subreddit_name = subreddit_name.replace('r/', '')
-        
+
         try:
             subreddit = reddit.subreddit(subreddit_name)
-            
+
             # Get recent posts (last 48 hours)
             for post in subreddit.new(limit=100):
                 post_age_hours = (datetime.utcnow().timestamp() - post.created_utc) / 3600
                 if post_age_hours > 48:
                     continue
-                
-                # Check if any keyword appears in title or body
-                text = f"{post.title} {post.selftext}".lower()
-                matched_keywords = [kw for kw in keywords if kw.lower() in text]
-                
+
+                thread_url = f"https://reddit.com{post.permalink}"
+
+                # Skip if we already have this thread for this client
+                if thread_url in existing_urls:
+                    continue
+
+                # Check if any keyword matches using flexible matching
+                text = f"{post.title} {post.selftext}"
+                matched_keywords = [kw for kw in keywords if keyword_matches(kw, text)]
+
                 if matched_keywords:
                     # Create opportunity directly
                     opportunity = {
@@ -66,7 +154,7 @@ def scan_for_opportunities(client_id, company_name, subreddits, keywords):
                         "subreddit_members": subreddit.subscribers,
                         "author_username": str(post.author) if post.author else "[deleted]",
                         "thread_title": post.title,
-                        "thread_url": f"https://reddit.com{post.permalink}",
+                        "thread_url": thread_url,
                         "original_post_text": post.selftext[:1000],
                         "date_posted": datetime.fromtimestamp(post.created_utc).isoformat(),
                         "matched_keywords": json.dumps(matched_keywords),
@@ -80,14 +168,15 @@ def scan_for_opportunities(client_id, company_name, subreddits, keywords):
                         "status": "pending",
                         "date_found": datetime.utcnow().isoformat()
                     }
-                    
+
                     opportunities_found.append(opportunity)
+                    existing_urls.add(thread_url)  # Track to avoid duplicates within same scan
                     print(f"    Found opportunity in r/{subreddit_name}: {post.title[:50]}...")
-                    
+
         except Exception as e:
             print(f"    Error scanning r/{subreddit_name}: {e}")
             continue
-    
+
     return opportunities_found
 
 

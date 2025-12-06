@@ -1394,7 +1394,7 @@ async def search_opportunities(client_id: str, keywords: str = None, limit: int 
 
         # Get all opportunities for client
         query = supabase.table("opportunities")\
-            .select("opportunity_id, thread_title, subreddit, opportunity_score, original_post_text, date_found")\
+            .select("opportunity_id, thread_title, subreddit, opportunity_score, original_post_text, date_found, matched_keywords, thread_url, status")\
             .eq("client_id", client_id)\
             .order("date_found", desc=True)\
             .limit(500)  # Get more to filter
@@ -1437,7 +1437,10 @@ async def search_opportunities(client_id: str, keywords: str = None, limit: int 
                     "thread_title": o.get("thread_title"),
                     "subreddit": o.get("subreddit"),
                     "score": o.get("opportunity_score"),
-                    "matched_keyword": o.get("matched_keyword"),
+                    "matched_keyword": o.get("matched_keyword"),  # From keyword filter
+                    "matched_keywords": o.get("matched_keywords"),  # From DB (JSON string)
+                    "thread_url": o.get("thread_url"),
+                    "status": o.get("status"),
                     "date_found": o.get("date_found")
                 } for o in opportunities
             ]
