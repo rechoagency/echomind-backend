@@ -1161,6 +1161,8 @@ async def create_voice_profile_manual(request: dict):
         "client_id": "uuid",
         "subreddit": "HomeImprovement"
     }
+
+    v3: Uses delete+insert instead of upsert
     """
     try:
         supabase = get_supabase()
@@ -1238,6 +1240,7 @@ async def create_voice_profile_manual(request: dict):
 
         return {
             "success": True,
+            "version": "v3",
             "client_id": client_id,
             "subreddit": subreddit,
             "profile_created": True,
@@ -1248,6 +1251,7 @@ async def create_voice_profile_manual(request: dict):
     except Exception as e:
         logger.error(f"Manual voice profile creation failed: {e}")
         return {
+            "version": "v3",
             "success": False,
             "error": str(e)
         }
