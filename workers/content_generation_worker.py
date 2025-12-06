@@ -14,12 +14,11 @@ from openai import OpenAI
 import sys
 import os
 
-# Traffic attribution for business ROI
+# Traffic attribution for business ROI (import with fallback)
 try:
     from utils.utm_builder import inject_link_naturally
 except ImportError:
-    logger.warning("utm_builder not found - traffic attribution disabled")
-    inject_link_naturally = None
+    inject_link_naturally = None  # Will log warning after logger is configured
 
 # Add parent directory to path for service imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -410,7 +409,8 @@ Write the response now:"""
                 product_matches = opportunity.get('product_matchback')
                 
                 # CRITICAL: Get knowledge base insights for ALL posts (not just when products mentioned)
-                opportunity_text = f"{opportunity.get('reddit_item_title', '')}\n\n{opportunity.get('reddit_item_content', '')}"
+                # Use correct column names from opportunities table
+                opportunity_text = f"{opportunity.get('thread_title', '')}\n\n{opportunity.get('original_post_text', '')}"
                 knowledge_insights = self.knowledge_matchback.match_opportunity_to_knowledge(
                     opportunity_text=opportunity_text,
                     client_id=client_id,
