@@ -124,9 +124,30 @@ class ContentGenerationWorker:
             return False
         return random.randint(1, 100) <= product_mention_percentage
     
+    # Fallback voice profile for when subreddit-specific profile is missing
+    FALLBACK_VOICE_PROFILE = {
+        "tone": "casual, helpful, conversational",
+        "grammar_style": "informal but clear",
+        "dominant_tone": "supportive",
+        "avg_sentence_length": 15,
+        "typo_frequency": 0.02,
+        "lowercase_start_pct": 30,
+        "exclamation_usage_pct": 8,
+        "exclamation_frequency": 0.1,
+        "question_frequency": 0.15,
+        "common_phrases": ["honestly", "IMO", "FWIW", "hope this helps", "in my experience"],
+        "signature_idioms": ["honestly", "literally", "same here", "I feel you"],
+        "formality_level": "LOW",
+        "formality_score": 0.3,
+        "uses_emojis": "occasional",
+        "voice_description": "Generic Reddit community voice - casual, helpful, and authentic.",
+        "is_fallback": True
+    }
+
     def get_voice_profile(self, subreddit_name: str, client_id: str) -> Optional[Dict]:
         """
-        Get voice profile for a subreddit
+        Get voice profile for a subreddit.
+        Returns fallback profile if none found (ensures content always sounds human).
         Note: voice_database_worker saves to 'subreddit' column, not 'subreddit_name'
         """
         try:
@@ -136,16 +157,17 @@ class ContentGenerationWorker:
                 .eq("subreddit", subreddit_name.lower())\
                 .eq("client_id", client_id)\
                 .execute()
-            
+
             if profile.data:
                 return profile.data[0]
-            
-            logger.warning(f"No voice profile found for r/{subreddit_name}")
-            return None
-        
+
+            # Return fallback profile instead of None
+            logger.warning(f"No voice profile found for r/{subreddit_name} - using fallback voice")
+            return self.FALLBACK_VOICE_PROFILE
+
         except Exception as e:
-            logger.error(f"Error fetching voice profile: {str(e)}")
-            return None
+            logger.error(f"Error fetching voice profile: {str(e)} - using fallback")
+            return self.FALLBACK_VOICE_PROFILE
     
     def build_generation_prompt(
         self,
@@ -392,7 +414,7 @@ Write the response now:"""
                 knowledge_insights = self.knowledge_matchback.match_opportunity_to_knowledge(
                     opportunity_text=opportunity_text,
                     client_id=client_id,
-                    similarity_threshold=0.70,  # Lower than products (0.75) for broader matching
+                    similarity_threshold=0.50,  # Lowered from 0.70 to capture more knowledge matches
                     max_insights=3
                 )
                 scores = [f"{k['relevance_percentage']}%" for k in knowledge_insights]

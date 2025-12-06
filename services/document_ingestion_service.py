@@ -378,8 +378,8 @@ class DocumentIngestionService:
         # Generate embedding
         try:
             embedding = self._generate_embedding(chunk_text)
-            
-            # Store embedding
+
+            # Store embedding in vector_embeddings (original table)
             embedding_record = {
                 "chunk_id": chunk_id,
                 "client_id": client_id,
@@ -388,13 +388,35 @@ class DocumentIngestionService:
                 "document_type": document_type,
                 "created_at": datetime.utcnow().isoformat()
             }
-            
+
             self.supabase.table("vector_embeddings").insert(embedding_record).execute()
-            
+
+            # DUAL-WRITE: Also store in document_embeddings (for RAG queries)
+            # This table is queried by match_knowledge_embeddings RPC function
+            try:
+                rag_embedding_record = {
+                    "document_id": document_id,
+                    "client_id": client_id,
+                    "chunk_text": chunk_text,
+                    "chunk_index": chunk_index,
+                    "embedding": embedding,
+                    "metadata": {
+                        "document_type": document_type,
+                        "char_count": len(chunk_text),
+                        "source": "document_ingestion_service"
+                    },
+                    "created_at": datetime.utcnow().isoformat()
+                }
+                self.supabase.table("document_embeddings").insert(rag_embedding_record).execute()
+                logger.info(f"Dual-write: Inserted embedding into document_embeddings for RAG")
+            except Exception as rag_e:
+                logger.warning(f"Failed to dual-write to document_embeddings: {rag_e}")
+                # Continue - vector_embeddings write succeeded
+
         except Exception as e:
             logger.error(f"Error generating embedding for chunk {chunk_id}: {str(e)}")
             # Continue processing even if embedding fails
-        
+
         return chunk_id
     
     def _generate_embedding(self, text: str) -> List[float]:

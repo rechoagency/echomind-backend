@@ -152,6 +152,46 @@ async def lifespan(app: FastAPI):
         )
         logger.info("✅ Scheduled: Opportunity scoring (Daily 10am EST)")
 
+        # Schedule monthly voice database refresh (1st of month at midnight UTC)
+        async def refresh_all_voice_profiles():
+            """Refresh voice profiles for all active clients"""
+            try:
+                from workers.voice_database_worker import build_client_voice_database
+                from supabase_client import get_supabase_client
+
+                supabase = get_supabase_client()
+                clients = supabase.table("clients")\
+                    .select("client_id, company_name")\
+                    .eq("subscription_status", "active")\
+                    .execute()
+
+                logger.info(f"🎤 Monthly voice refresh: Processing {len(clients.data or [])} clients")
+
+                for client in (clients.data or []):
+                    try:
+                        logger.info(f"  Building voice DB for {client['company_name']}")
+                        await build_client_voice_database(client['client_id'])
+                    except Exception as e:
+                        logger.error(f"  Voice refresh failed for {client['client_id']}: {e}")
+
+                logger.info("✅ Monthly voice refresh complete")
+            except Exception as e:
+                logger.error(f"Monthly voice refresh failed: {e}")
+
+        scheduler.add_job(
+            refresh_all_voice_profiles,
+            trigger=CronTrigger(
+                day='1',
+                hour=0,
+                minute=0,
+                timezone=pytz.timezone('UTC')
+            ),
+            id='monthly_voice_refresh',
+            name='Monthly Voice Database Refresh: 1st of month at midnight UTC',
+            replace_existing=True
+        )
+        logger.info("✅ Scheduled: Monthly voice refresh (1st of month)")
+
         # Start scheduler
         scheduler.start()
         logger.info("✅ Background worker scheduler started")

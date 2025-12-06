@@ -1465,3 +1465,118 @@ async def populate_embeddings_from_chunks(client_id: str):
             "success": False,
             "error": str(e)
         }
+
+
+@router.post("/sync-embeddings-tables")
+async def sync_embeddings_tables():
+    """
+    One-time sync: Copy embeddings from vector_embeddings to document_embeddings.
+
+    This fixes existing clients where embeddings were created before the dual-write fix.
+    The RAG function match_knowledge_embeddings queries document_embeddings,
+    but old uploads only wrote to vector_embeddings.
+
+    Process:
+    1. Get all rows from vector_embeddings (with chunk data from document_chunks)
+    2. For each row, check if it already exists in document_embeddings
+    3. If not, insert into document_embeddings
+    """
+    try:
+        supabase = get_supabase()
+
+        logger.info("🔄 Starting embeddings table sync...")
+
+        # Get all vector_embeddings with their chunk data
+        vector_embs = supabase.table("vector_embeddings")\
+            .select("id, chunk_id, client_id, embedding, document_type, created_at")\
+            .execute()
+
+        if not vector_embs.data:
+            return {
+                "success": True,
+                "message": "No embeddings in vector_embeddings to sync",
+                "synced": 0
+            }
+
+        logger.info(f"Found {len(vector_embs.data)} embeddings in vector_embeddings")
+
+        synced = 0
+        skipped = 0
+        errors = []
+
+        for ve in vector_embs.data:
+            try:
+                chunk_id = ve.get("chunk_id")
+                client_id = ve.get("client_id")
+                embedding = ve.get("embedding")
+
+                if not chunk_id or not embedding:
+                    skipped += 1
+                    continue
+
+                # Get chunk details
+                chunk = supabase.table("document_chunks")\
+                    .select("document_id, chunk_text, chunk_index")\
+                    .eq("id", chunk_id)\
+                    .execute()
+
+                if not chunk.data:
+                    skipped += 1
+                    continue
+
+                chunk_data = chunk.data[0]
+                document_id = chunk_data.get("document_id")
+                chunk_text = chunk_data.get("chunk_text")
+                chunk_index = chunk_data.get("chunk_index", 0)
+
+                # Check if already exists in document_embeddings
+                existing = supabase.table("document_embeddings")\
+                    .select("id")\
+                    .eq("document_id", document_id)\
+                    .eq("chunk_index", chunk_index)\
+                    .eq("client_id", client_id)\
+                    .execute()
+
+                if existing.data:
+                    skipped += 1
+                    continue
+
+                # Insert into document_embeddings
+                rag_record = {
+                    "document_id": document_id,
+                    "client_id": client_id,
+                    "chunk_text": chunk_text,
+                    "chunk_index": chunk_index,
+                    "embedding": embedding,
+                    "metadata": {
+                        "document_type": ve.get("document_type", "unknown"),
+                        "char_count": len(chunk_text) if chunk_text else 0,
+                        "source": "sync_embeddings_tables"
+                    },
+                    "created_at": ve.get("created_at") or datetime.utcnow().isoformat()
+                }
+
+                supabase.table("document_embeddings").insert(rag_record).execute()
+                synced += 1
+
+            except Exception as row_e:
+                errors.append(str(row_e))
+                if len(errors) > 10:
+                    break  # Stop if too many errors
+
+        logger.info(f"✅ Sync complete: {synced} synced, {skipped} skipped, {len(errors)} errors")
+
+        return {
+            "success": True,
+            "synced": synced,
+            "skipped": skipped,
+            "errors": errors[:5] if errors else [],
+            "total_in_vector_embeddings": len(vector_embs.data)
+        }
+
+    except Exception as e:
+        logger.error(f"Sync embeddings tables failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

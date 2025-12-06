@@ -252,27 +252,30 @@ class OpportunityScoringWorker:
         
         return min(score, 100)
     
-    def process_all_opportunities(self, client_id: Optional[str] = None) -> Dict:
+    def process_all_opportunities(self, client_id: Optional[str] = None, batch_size: int = 1000) -> Dict:
         """
-        Process all opportunities without scores
-        
+        Process opportunities without scores (with batch limits to prevent timeouts)
+
         Args:
             client_id: Optional client ID to filter by
-            
+            batch_size: Maximum opportunities to process per run (default 1000)
+
         Returns:
             Dictionary with processing results
         """
         try:
-            logger.info("Starting opportunity scoring process...")
-            
-            # Get opportunities without scores
+            logger.info(f"Starting opportunity scoring process (batch_size={batch_size})...")
+
+            # Get opportunities without scores - prioritize recent, limit batch size
             query = self.supabase.table("opportunities")\
                 .select("*")\
-                .is_("opportunity_score", "null")
-            
+                .is_("opportunity_score", "null")\
+                .order("created_at", desc=True)\
+                .limit(batch_size)
+
             if client_id:
                 query = query.eq("client_id", client_id)
-            
+
             opportunities = query.execute()
             
             if not opportunities.data:
@@ -319,12 +322,18 @@ class OpportunityScoringWorker:
                     errors += 1
 
             logger.info(f"Scoring complete: {processed} processed, {errors} errors")
-            
+
+            # Check if there's more to process (hit batch limit)
+            more_to_process = len(opportunities.data) >= batch_size
+
             return {
                 "success": True,
                 "processed": processed,
                 "errors": errors,
-                "total": len(opportunities.data)
+                "batch_size": batch_size,
+                "total_in_batch": len(opportunities.data),
+                "more_to_process": more_to_process,
+                "message": f"Processed {processed} opportunities. {'More remain - will continue next run.' if more_to_process else 'All caught up!'}"
             }
         
         except Exception as e:
