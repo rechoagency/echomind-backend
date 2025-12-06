@@ -1876,3 +1876,255 @@ async def sync_embeddings_tables():
             "success": False,
             "error": str(e)
         }
+
+
+# =============================================================================
+# VOICE PROFILE CRAWLING ENDPOINTS
+# =============================================================================
+
+
+class VoiceCrawlRequest(BaseModel):
+    client_id: str
+    subreddit: str
+    user_limit: int = 100
+    comments_per_user: int = 20
+
+
+@router.post("/crawl-voice-profile")
+async def crawl_voice_profile(request: VoiceCrawlRequest, background_tasks: BackgroundTasks):
+    """
+    Manually trigger voice profile crawl for a subreddit.
+
+    This endpoint crawls top users in the subreddit and extracts their
+    writing patterns (avg word count, formality, slang, phrases, etc.)
+
+    Body:
+    {
+        "client_id": "uuid",
+        "subreddit": "HomeImprovement",
+        "user_limit": 100,  # Number of users to analyze
+        "comments_per_user": 20  # Comments per user to collect
+    }
+
+    Returns immediately, runs in background for large crawls.
+    For small crawls (user_limit <= 50), runs synchronously.
+    """
+    import asyncio
+    import traceback
+
+    try:
+        logger.info(f"🎤 Voice profile crawl requested for r/{request.subreddit}")
+
+        # For small crawls, run synchronously to return results immediately
+        if request.user_limit <= 50:
+            try:
+                from workers.voice_database_worker import VoiceDatabaseWorker
+
+                worker = VoiceDatabaseWorker()
+
+                # Run the async function
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                profile = loop.run_until_complete(
+                    worker.analyze_subreddit_voice(
+                        subreddit_name=request.subreddit,
+                        client_id=request.client_id,
+                        user_limit=request.user_limit,
+                        comments_per_user=request.comments_per_user
+                    )
+                )
+                loop.close()
+
+                return {
+                    "success": True,
+                    "mode": "synchronous",
+                    "subreddit": request.subreddit,
+                    "users_analyzed": profile.get("users_analyzed", 0),
+                    "comments_analyzed": profile.get("comments_analyzed", 0),
+                    "profile_summary": {
+                        "avg_word_count": profile.get("avg_word_count"),
+                        "formality_score": profile.get("formality_score"),
+                        "capitalization_style": profile.get("capitalization_style"),
+                        "common_phrases": profile.get("common_phrases", [])[:5],
+                        "slang_examples": profile.get("slang_examples", [])[:5],
+                        "emoji_frequency": profile.get("emoji_frequency"),
+                        "dominant_tone": profile.get("dominant_tone"),
+                        "voice_description": profile.get("voice_description", "")[:200]
+                    }
+                }
+
+            except Exception as e:
+                error_tb = traceback.format_exc()
+                logger.error(f"❌ Voice crawl failed: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "traceback": error_tb
+                }
+
+        else:
+            # For large crawls, run in background
+            async def run_voice_crawl():
+                try:
+                    from workers.voice_database_worker import VoiceDatabaseWorker
+
+                    worker = VoiceDatabaseWorker()
+                    await worker.analyze_subreddit_voice(
+                        subreddit_name=request.subreddit,
+                        client_id=request.client_id,
+                        user_limit=request.user_limit,
+                        comments_per_user=request.comments_per_user
+                    )
+                    logger.info(f"✅ Background voice crawl completed for r/{request.subreddit}")
+                except Exception as e:
+                    logger.error(f"❌ Background voice crawl failed: {e}")
+
+            background_tasks.add_task(run_voice_crawl)
+
+            return {
+                "success": True,
+                "mode": "background",
+                "message": f"Voice profile crawl started for r/{request.subreddit}",
+                "subreddit": request.subreddit,
+                "user_limit": request.user_limit,
+                "comments_per_user": request.comments_per_user,
+                "estimated_time": "2-5 minutes"
+            }
+
+    except Exception as e:
+        logger.error(f"Error starting voice crawl: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/voice-profiles/{client_id}")
+async def get_voice_profiles(client_id: str):
+    """
+    Get all voice profiles for a client.
+
+    Returns:
+        List of voice profiles with key metrics
+    """
+    try:
+        supabase = get_supabase()
+
+        profiles = supabase.table("voice_profiles")\
+            .select("*")\
+            .eq("client_id", client_id)\
+            .execute()
+
+        if not profiles.data:
+            return {
+                "success": True,
+                "client_id": client_id,
+                "profiles": [],
+                "count": 0,
+                "message": "No voice profiles found for this client"
+            }
+
+        # Format profiles for response
+        formatted = []
+        for p in profiles.data:
+            vp = p.get("voice_profile", {}) or {}
+            formatted.append({
+                "subreddit": p.get("subreddit"),
+                "users_analyzed": vp.get("users_analyzed", 0) or p.get("users_analyzed", 0),
+                "comments_analyzed": vp.get("comments_analyzed", 0) or p.get("comments_analyzed", 0),
+                "avg_word_count": vp.get("avg_word_count"),
+                "formality_score": vp.get("formality_score") or p.get("formality_score"),
+                "capitalization_style": vp.get("capitalization_style"),
+                "common_phrases": vp.get("common_phrases", [])[:5],
+                "slang_examples": vp.get("slang_examples", [])[:5],
+                "emoji_frequency": vp.get("emoji_frequency"),
+                "dominant_tone": vp.get("dominant_tone") or p.get("dominant_tone"),
+                "last_crawl_date": vp.get("last_crawl_date"),
+                "is_fallback": vp.get("is_fallback", False)
+            })
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "profiles": formatted,
+            "count": len(formatted)
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching voice profiles: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/build-all-voice-profiles/{client_id}")
+async def build_all_voice_profiles(client_id: str, background_tasks: BackgroundTasks, user_limit: int = 100, comments_per_user: int = 20):
+    """
+    Build voice profiles for ALL subreddits configured for a client.
+
+    Runs in background and builds profiles for each subreddit in
+    the client's client_subreddit_config table.
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        company_name = client.data[0].get("company_name")
+
+        # Get configured subreddits
+        subs = supabase.table("client_subreddit_config")\
+            .select("subreddit_name")\
+            .eq("client_id", client_id)\
+            .eq("is_active", True)\
+            .execute()
+
+        subreddits = [s["subreddit_name"] for s in (subs.data or [])]
+
+        if not subreddits:
+            # Fallback to subreddits from opportunities
+            opps = supabase.table("opportunities")\
+                .select("subreddit")\
+                .eq("client_id", client_id)\
+                .execute()
+            if opps.data:
+                subreddits = list(set([o["subreddit"] for o in opps.data if o.get("subreddit")]))[:10]
+
+        if not subreddits:
+            return {
+                "success": False,
+                "error": "No subreddits configured for this client"
+            }
+
+        logger.info(f"🎤 Building voice profiles for {len(subreddits)} subreddits for {company_name}")
+
+        # Run in background
+        async def build_profiles():
+            try:
+                from workers.voice_database_worker import build_client_voice_database
+
+                result = await build_client_voice_database(
+                    client_id=client_id,
+                    user_limit=user_limit,
+                    comments_per_user=comments_per_user
+                )
+                logger.info(f"✅ Voice profiles built for {company_name}: {result}")
+            except Exception as e:
+                logger.error(f"❌ Error building voice profiles: {e}")
+
+        background_tasks.add_task(build_profiles)
+
+        return {
+            "success": True,
+            "message": f"Building voice profiles for {len(subreddits)} subreddits",
+            "client_id": client_id,
+            "company_name": company_name,
+            "subreddits": subreddits,
+            "user_limit": user_limit,
+            "comments_per_user": comments_per_user,
+            "estimated_time": f"{len(subreddits) * 2}-{len(subreddits) * 5} minutes"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building voice profiles: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,308 +1,708 @@
 """
-Voice Database Worker
+Voice Database Worker - COMPREHENSIVE VOICE PROFILE BUILDER
 
-Crawls top Redditors in target subreddits to build voice profiles.
-Analyzes language patterns, idioms, grammar, tone, sentiment for authentic content generation.
+Crawls top Redditors in target subreddits to build comprehensive voice profiles.
+Analyzes REAL language patterns, idioms, grammar, tone, sentiment for authentic content generation.
 
-This runs during client onboarding to create subreddit-specific voice profiles.
+This is the CORE of subreddit-specific voice matching - every field extracted here
+should be used in content generation to produce authentic-sounding content.
+
+FIELDS EXTRACTED:
+- Length patterns: avg_word_count, word_count_range, short_reply_probability
+- Grammar patterns: capitalization_style, lowercase_start_pct
+- Lexical patterns: common_phrases, slang_examples, signature_idioms
+- Emoji patterns: emoji_frequency, common_emojis
+- Tone patterns: dominant_tone, formality_score
+- Content patterns: example_openers, question_frequency, exclamation_usage_pct
+- Raw data: sample_comments for reference
 """
 
 import os
 import asyncio
 import logging
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from collections import Counter
+
 import praw
 import prawcore
 from openai import OpenAI
-import numpy as np
-from collections import Counter
-import re
 
 from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
+
 class VoiceDatabaseWorker:
-    """Builds subreddit-specific voice profiles from top Redditors"""
-    
+    """
+    Comprehensive voice profile builder.
+    Crawls subreddit users and extracts ACTUAL writing patterns.
+    """
+
     def __init__(self):
         self.supabase = get_supabase_client()
         self.openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
+
         # Initialize Reddit API
         self.reddit = praw.Reddit(
             client_id=os.getenv("REDDIT_CLIENT_ID"),
             client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
             user_agent=os.getenv("REDDIT_USER_AGENT", "EchoMind/1.0")
         )
-        
-        # Default crawl settings
-        self.TOP_USERS_PER_SUBREDDIT = 1000
-        self.COMMENTS_PER_USER = 50
+
+        # Configurable crawl settings
+        self.TOP_USERS_PER_SUBREDDIT = 100  # Default, can be overridden
+        self.COMMENTS_PER_USER = 20
         self.MIN_COMMENT_LENGTH = 20
-        
-    async def analyze_subreddit_voice(self, subreddit_name: str, client_id: str) -> Dict[str, Any]:
+
+        # Known slang/informal words to detect
+        self.KNOWN_SLANG = [
+            'ngl', 'tbh', 'imo', 'imho', 'idk', 'idek', 'lol', 'lmao', 'rofl',
+            'gonna', 'wanna', 'kinda', 'sorta', 'gotta', 'shoulda', 'coulda', 'woulda',
+            'lowkey', 'highkey', 'deadass', 'legit', 'hella', 'sus', 'salty',
+            'yall', 'yolo', 'fomo', 'goat', 'lit', 'fire', 'dope', 'sick',
+            'bruh', 'fam', 'bro', 'dude', 'man', 'yo', 'ay', 'aye',
+            'rn', 'atm', 'btw', 'fyi', 'smh', 'wtf', 'wth', 'omg',
+            'af', 'asf', 'fr', 'ong', 'bet'
+        ]
+
+        # Formality indicators
+        self.CASUAL_INDICATORS = ['lol', 'lmao', 'tbh', 'ngl', 'idk', 'imo', 'gonna', 'wanna', 'kinda', 'sorta']
+        self.FORMAL_INDICATORS = ['however', 'therefore', 'furthermore', 'additionally', 'consequently', 'moreover']
+
+    async def analyze_subreddit_voice(
+        self,
+        subreddit_name: str,
+        client_id: str,
+        user_limit: Optional[int] = None,
+        comments_per_user: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Analyze voice patterns for a specific subreddit
-        
+        Build comprehensive voice profile for a subreddit.
+
         Args:
-            subreddit_name: Name of subreddit (e.g., "BeyondTheBump")
+            subreddit_name: Name of subreddit (e.g., "HomeImprovement")
             client_id: UUID of client
-            
+            user_limit: Override default user limit
+            comments_per_user: Override default comments per user
+
         Returns:
-            Voice profile dictionary
+            Complete voice profile dictionary
         """
         try:
-            logger.info(f"Building voice profile for r/{subreddit_name}")
-            
-            # Step 1: Get top users in subreddit
-            top_users = await self._get_top_subreddit_users(subreddit_name)
-            logger.info(f"Found {len(top_users)} top users in r/{subreddit_name}")
-            
-            # Step 2: Collect comments from top users
+            user_limit = user_limit or self.TOP_USERS_PER_SUBREDDIT
+            comments_per_user = comments_per_user or self.COMMENTS_PER_USER
+
+            logger.info(f"🎤 Building voice profile for r/{subreddit_name} (users: {user_limit}, comments/user: {comments_per_user})")
+
+            # Step 1: Get top active users in subreddit
+            top_users = await self._get_top_subreddit_users(subreddit_name, limit=user_limit)
+            logger.info(f"📊 Found {len(top_users)} active users in r/{subreddit_name}")
+
+            if not top_users:
+                logger.warning(f"No users found in r/{subreddit_name} - using default profile")
+                return self._get_default_voice_profile(subreddit_name)
+
+            # Step 2: Collect comments from these users
             all_comments = []
-            for user in top_users[:self.TOP_USERS_PER_SUBREDDIT]:
-                comments = await self._get_user_comments(user['username'], subreddit_name)
-                all_comments.extend(comments)
-            
-            logger.info(f"Collected {len(all_comments)} comments from r/{subreddit_name}")
-            
-            # Step 3: Analyze language patterns
-            voice_profile = await self._analyze_language_patterns(all_comments, subreddit_name)
-            
-            # Step 4: Use GPT-4 to extract tone and style
-            enhanced_profile = await self._enhance_with_ai_analysis(voice_profile, all_comments[:100])
-            
+            users_processed = 0
+            for user in top_users[:user_limit]:
+                try:
+                    comments = await self._get_user_comments_in_subreddit(
+                        user['username'],
+                        subreddit_name,
+                        limit=comments_per_user
+                    )
+                    if comments:
+                        all_comments.extend(comments)
+                        users_processed += 1
+                except Exception as e:
+                    logger.warning(f"Failed to get comments for u/{user['username']}: {e}")
+                    continue
+
+            logger.info(f"📝 Collected {len(all_comments)} comments from {users_processed} users in r/{subreddit_name}")
+
+            if len(all_comments) < 50:
+                logger.warning(f"Insufficient comments ({len(all_comments)}) - augmenting with default values")
+
+            # Step 3: Analyze ALL patterns from comments
+            profile = self._analyze_comprehensive_patterns(all_comments, subreddit_name)
+            profile['users_analyzed'] = users_processed
+            profile['comments_analyzed'] = len(all_comments)
+            profile['last_crawl_date'] = datetime.utcnow().isoformat()
+
+            # Step 4: Enhance with AI analysis for tone/sentiment
+            profile = await self._enhance_with_ai_analysis(profile, all_comments[:30])
+
             # Step 5: Save to database
-            await self._save_voice_profile(subreddit_name, client_id, enhanced_profile)
-            
-            return enhanced_profile
-            
+            await self._save_voice_profile(subreddit_name, client_id, profile)
+
+            logger.info(f"✅ Voice profile complete for r/{subreddit_name}: {len(all_comments)} comments analyzed")
+            return profile
+
         except Exception as e:
-            logger.error(f"Error analyzing voice for r/{subreddit_name}: {e}")
+            logger.error(f"❌ Error building voice profile for r/{subreddit_name}: {e}")
             raise
-    
-    async def _get_top_subreddit_users(self, subreddit_name: str) -> List[Dict]:
-        """Get top active users in subreddit"""
+
+    async def _get_top_subreddit_users(self, subreddit_name: str, limit: int = 100) -> List[Dict]:
+        """Get top active users from subreddit hot/top posts"""
         try:
             subreddit = self.reddit.subreddit(subreddit_name)
-            top_users = []
             user_karma = Counter()
-            
+
             # Sample from hot, top, and new posts
-            for submission in subreddit.hot(limit=100):
-                submission.comments.replace_more(limit=0)
-                for comment in submission.comments.list()[:50]:
-                    if hasattr(comment, 'author') and comment.author:
-                        user_karma[comment.author.name] += comment.score
-            
-            # Convert to list sorted by karma
-            for username, karma in user_karma.most_common(self.TOP_USERS_PER_SUBREDDIT):
-                top_users.append({
-                    'username': username,
-                    'karma': karma
-                })
-            
+            post_sources = [
+                ('hot', subreddit.hot(limit=50)),
+                ('top', subreddit.top(limit=30, time_filter='month')),
+                ('new', subreddit.new(limit=20))
+            ]
+
+            for source_name, submissions in post_sources:
+                for submission in submissions:
+                    try:
+                        submission.comments.replace_more(limit=0)
+                        for comment in submission.comments.list()[:30]:
+                            if hasattr(comment, 'author') and comment.author:
+                                # Skip bots and AutoModerator
+                                username = comment.author.name
+                                if username.lower() not in ['automoderator', 'reddit']:
+                                    user_karma[username] += comment.score
+                    except Exception:
+                        continue
+
+            # Convert to sorted list
+            top_users = [
+                {'username': username, 'karma': karma}
+                for username, karma in user_karma.most_common(limit)
+                if karma > 0  # Only users with positive karma
+            ]
+
             return top_users
-            
+
         except Exception as e:
             logger.error(f"Error getting top users from r/{subreddit_name}: {e}")
             return []
-    
-    async def _get_user_comments(self, username: str, subreddit_name: str) -> List[str]:
+
+    async def _get_user_comments_in_subreddit(
+        self,
+        username: str,
+        subreddit_name: str,
+        limit: int = 20
+    ) -> List[Dict]:
         """Get recent comments from user in specific subreddit"""
         try:
             user = self.reddit.redditor(username)
             comments = []
-            
-            for comment in user.comments.new(limit=self.COMMENTS_PER_USER):
-                if hasattr(comment, 'subreddit') and comment.subreddit.display_name == subreddit_name:
-                    if len(comment.body) >= self.MIN_COMMENT_LENGTH:
-                        comments.append(comment.body)
-            
+
+            for comment in user.comments.new(limit=limit * 3):  # Get more to filter
+                try:
+                    if hasattr(comment, 'subreddit'):
+                        if comment.subreddit.display_name.lower() == subreddit_name.lower():
+                            body = comment.body
+                            if len(body) >= self.MIN_COMMENT_LENGTH and body not in ['[deleted]', '[removed]']:
+                                comments.append({
+                                    'body': body,
+                                    'score': comment.score,
+                                    'created_utc': comment.created_utc
+                                })
+                                if len(comments) >= limit:
+                                    break
+                except Exception:
+                    continue
+
             return comments
-            
+
         except prawcore.exceptions.NotFound:
-            logger.warning(f"User {username} not found or deleted")
+            logger.debug(f"User {username} not found or deleted")
+            return []
+        except prawcore.exceptions.Forbidden:
+            logger.debug(f"User {username} has private profile")
             return []
         except Exception as e:
-            logger.error(f"Error getting comments for {username}: {e}")
+            logger.warning(f"Error getting comments for u/{username}: {e}")
             return []
-    
-    async def _analyze_language_patterns(self, comments: List[str], subreddit_name: str) -> Dict[str, Any]:
-        """Analyze linguistic patterns from comments"""
-        
+
+    def _analyze_comprehensive_patterns(self, comments: List[Dict], subreddit_name: str) -> Dict[str, Any]:
+        """
+        Analyze ALL linguistic patterns from comments.
+        This is where the actual LEARNING happens.
+        """
         if not comments:
             return self._get_default_voice_profile(subreddit_name)
-        
-        # Combine all comments for analysis
-        full_text = " ".join(comments)
-        
-        # Basic linguistic analysis
-        sentences = [s.strip() for s in re.split(r'[.!?]+', full_text) if s.strip()]
-        words = full_text.split()
-        
-        # Calculate metrics
-        avg_sentence_length = np.mean([len(s.split()) for s in sentences]) if sentences else 12
-        avg_word_length = np.mean([len(w) for w in words]) if words else 5
-        
-        # Detect common phrases (2-3 word combinations)
-        bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
-        trigrams = [f"{words[i]} {words[i+1]} {words[i+2]}" for i in range(len(words)-2)]
-        common_phrases = [phrase for phrase, count in Counter(bigrams + trigrams).most_common(20)]
-        
-        # Detect typo/casual writing frequency
-        typo_indicators = sum(1 for w in words if not w.isalpha() and any(c.isalpha() for c in w))
-        typo_frequency = typo_indicators / len(words) if words else 0.02
-        
-        # Detect emoji usage
-        emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF]')
-        emoji_count = len(emoji_pattern.findall(full_text))
-        uses_emojis = "frequent" if emoji_count > len(comments) * 0.3 else "occasional" if emoji_count > 0 else "rare"
-        
-        # Detect exclamation/question frequency
-        exclamation_freq = full_text.count('!') / len(sentences) if sentences else 0.1
-        question_freq = full_text.count('?') / len(sentences) if sentences else 0.1
-        
+
+        # Initialize counters
+        word_counts = []
+        sentence_counts = []
+        lowercase_starts = 0
+        total_sentences = 0
+        exclamation_count = 0
+        question_count = 0
+        total_comments = len(comments)
+
+        # Word/phrase tracking
+        all_words = []
+        bigrams = []
+        trigrams = []
+        openers = []
+        closers = []
+        emojis_found = []
+
+        # Process each comment
+        for comment_data in comments:
+            text = comment_data.get('body', '')
+            if not text or text in ['[deleted]', '[removed]']:
+                continue
+
+            # Word count
+            words = text.split()
+            word_counts.append(len(words))
+            all_words.extend([w.lower().strip('.,!?;:') for w in words])
+
+            # Sentence analysis
+            sentences = self._split_into_sentences(text)
+            sentence_counts.append(len(sentences))
+
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                total_sentences += 1
+
+                # Check lowercase start (excluding quotes and formatting)
+                first_char = sentence[0] if sentence else ''
+                if first_char.isalpha() and first_char.islower():
+                    lowercase_starts += 1
+
+                # Punctuation analysis
+                if sentence.endswith('!'):
+                    exclamation_count += 1
+                if sentence.endswith('?'):
+                    question_count += 1
+
+            # Extract opener (first 3 words)
+            if len(words) >= 3:
+                opener = ' '.join(words[:3]).lower()
+                # Clean punctuation
+                opener = re.sub(r'[^\w\s]', '', opener)
+                if opener:
+                    openers.append(opener)
+
+            # Extract closer (last 3 words)
+            if len(words) >= 3:
+                closer = ' '.join(words[-3:]).lower()
+                closer = re.sub(r'[^\w\s]', '', closer)
+                if closer:
+                    closers.append(closer)
+
+            # Find emojis
+            emojis_in_text = self._extract_emojis(text)
+            emojis_found.extend(emojis_in_text)
+
+            # Build bigrams and trigrams
+            clean_words = [w.lower().strip('.,!?;:') for w in words if w.isalpha() or w.isalnum()]
+            if len(clean_words) >= 2:
+                bigrams.extend([f"{clean_words[i]} {clean_words[i+1]}" for i in range(len(clean_words)-1)])
+            if len(clean_words) >= 3:
+                trigrams.extend([f"{clean_words[i]} {clean_words[i+1]} {clean_words[i+2]}" for i in range(len(clean_words)-2)])
+
+        # === CALCULATE STATISTICS ===
+
+        # Word count statistics
+        avg_word_count = sum(word_counts) / len(word_counts) if word_counts else 50
+        sorted_counts = sorted(word_counts)
+
+        if len(sorted_counts) >= 10:
+            p10_idx = len(sorted_counts) // 10
+            p90_idx = len(sorted_counts) * 9 // 10
+            word_count_range = {"min": sorted_counts[p10_idx], "max": sorted_counts[p90_idx]}
+        else:
+            word_count_range = {
+                "min": min(word_counts) if word_counts else 20,
+                "max": max(word_counts) if word_counts else 150
+            }
+
+        # Short reply probability (under 50 words)
+        short_replies = sum(1 for wc in word_counts if wc < 50)
+        short_reply_probability = short_replies / len(word_counts) if word_counts else 0.5
+
+        # Capitalization analysis
+        lowercase_start_pct = (lowercase_starts / total_sentences * 100) if total_sentences > 0 else 20
+        if lowercase_start_pct > 60:
+            capitalization_style = "mostly_lowercase"
+        elif lowercase_start_pct > 30:
+            capitalization_style = "mixed"
+        else:
+            capitalization_style = "proper"
+
+        # Exclamation and question frequency
+        exclamation_usage_pct = (exclamation_count / total_sentences * 100) if total_sentences > 0 else 5
+        question_frequency = question_count / total_comments if total_comments > 0 else 0.1
+
+        # Common phrases
+        common_phrases = self._find_common_phrases(bigrams, trigrams, min_count=3)
+
+        # Slang detection
+        slang_examples = self._find_slang_in_words(all_words)
+
+        # Signature idioms (subreddit-specific)
+        signature_idioms = self._find_signature_idioms(trigrams, min_count=3)
+
+        # Emoji analysis
+        emoji_counts = Counter(emojis_found)
+        common_emojis = [emoji for emoji, count in emoji_counts.most_common(5) if count >= 2]
+        comments_with_emojis = sum(1 for c in comments if self._extract_emojis(c.get('body', '')))
+        emoji_ratio = comments_with_emojis / total_comments if total_comments > 0 else 0
+
+        if emoji_ratio > 0.3:
+            emoji_frequency = "frequent"
+        elif emoji_ratio > 0.1:
+            emoji_frequency = "occasional"
+        elif emoji_ratio > 0.02:
+            emoji_frequency = "rare"
+        else:
+            emoji_frequency = "none"
+
+        # Opener analysis
+        opener_counts = Counter(openers)
+        example_openers = [op for op, count in opener_counts.most_common(8) if count >= 2]
+
+        # Closer analysis
+        closer_counts = Counter(closers)
+        example_closers = [cl for cl, count in closer_counts.most_common(5) if count >= 2]
+
+        # Formality score (0 = very casual, 1 = very formal)
+        casual_count = sum(1 for w in all_words if w in self.CASUAL_INDICATORS)
+        formal_count = sum(1 for w in all_words if w in self.FORMAL_INDICATORS)
+        total_indicator_words = casual_count + formal_count
+        if total_indicator_words > 0:
+            formality_score = formal_count / total_indicator_words
+        else:
+            formality_score = 0.3  # Default slightly casual
+
+        # Hedging frequency ("I think", "maybe", "probably")
+        hedging_words = ['think', 'maybe', 'probably', 'might', 'perhaps', 'possibly', 'guess', 'suppose']
+        hedging_count = sum(1 for w in all_words if w in hedging_words)
+        hedging_frequency = hedging_count / len(all_words) if all_words else 0.02
+
+        # Sample comments (top scored for reference)
+        sample_comments = [
+            {"text": c.get('body', '')[:400], "score": c.get('score', 0)}
+            for c in sorted(comments, key=lambda x: x.get('score', 0), reverse=True)[:5]
+        ]
+
         return {
             "subreddit": subreddit_name,
-            "sample_size": len(comments),
-            "avg_sentence_length": round(avg_sentence_length, 1),
-            "avg_word_length": round(avg_word_length, 1),
+
+            # Length patterns
+            "avg_word_count": round(avg_word_count, 1),
+            "word_count_range": word_count_range,
+            "short_reply_probability": round(short_reply_probability, 2),
+
+            # Grammar patterns
+            "capitalization_style": capitalization_style,
+            "lowercase_start_pct": round(lowercase_start_pct, 1),
+
+            # Lexical patterns
             "common_phrases": common_phrases[:15],
-            "typo_frequency": round(typo_frequency, 3),
-            "uses_emojis": uses_emojis,
-            "exclamation_frequency": round(exclamation_freq, 2),
-            "question_frequency": round(question_freq, 2),
-            "analyzed_at": datetime.utcnow().isoformat()
+            "slang_examples": slang_examples[:10],
+            "signature_idioms": signature_idioms[:8],
+
+            # Emoji patterns
+            "emoji_frequency": emoji_frequency,
+            "common_emojis": common_emojis,
+
+            # Content patterns
+            "example_openers": example_openers[:5],
+            "example_closers": example_closers[:5],
+            "question_frequency": round(question_frequency, 2),
+            "exclamation_usage_pct": round(exclamation_usage_pct, 1),
+            "hedging_frequency": round(hedging_frequency, 3),
+
+            # Tone patterns (will be enhanced by AI)
+            "formality_score": round(formality_score, 2),
+            "dominant_tone": "helpful",  # Default, AI will refine
+
+            # Raw data
+            "sample_comments": sample_comments
         }
-    
-    async def _enhance_with_ai_analysis(self, basic_profile: Dict, sample_comments: List[str]) -> Dict[str, Any]:
-        """Use GPT-4 to extract tone, sentiment, and style"""
-        
-        sample_text = "\n\n---\n\n".join(sample_comments[:20])
-        
+
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """Split text into sentences"""
+        # Handle common abbreviations
+        text = re.sub(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e)\.\s', r'\1<DOT> ', text)
+        sentences = re.split(r'[.!?]+', text)
+        sentences = [s.replace('<DOT>', '.').strip() for s in sentences if s.strip()]
+        return sentences
+
+    def _extract_emojis(self, text: str) -> List[str]:
+        """Extract emojis from text"""
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F700-\U0001F77F"  # alchemical symbols
+            "\U0001F780-\U0001F7FF"  # Geometric Shapes
+            "\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
+            "\U0001F900-\U0001F9FF"  # Supplemental Symbols
+            "\U0001FA00-\U0001FA6F"  # Chess Symbols
+            "\U0001FA70-\U0001FAFF"  # Symbols Extended-A
+            "\U00002702-\U000027B0"  # Dingbats
+            "\U0001F1E0-\U0001F1FF"  # Flags
+            "]+"
+        )
+        return emoji_pattern.findall(text)
+
+    def _find_common_phrases(self, bigrams: List[str], trigrams: List[str], min_count: int = 3) -> List[str]:
+        """Find commonly used phrases, filtering stop words"""
+        stop_patterns = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'to', 'of', 'and', 'or', 'in', 'on', 'at', 'it', 'i', 'you', 'he', 'she', 'they', 'we', 'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'for', 'with', 'as', 'by', 'from', 'but', 'not', 'if', 'so', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'what', 'which', 'who', 'when', 'where', 'how', 'why', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'only', 'own', 'same', 'than', 'too', 'very', 'just', 'also'}
+
+        bigram_counts = Counter(bigrams)
+        trigram_counts = Counter(trigrams)
+
+        common = []
+
+        # Prefer trigrams
+        for phrase, count in trigram_counts.most_common(50):
+            if count >= min_count:
+                words = set(phrase.split())
+                # At least one non-stop word
+                if not words.issubset(stop_patterns):
+                    common.append(phrase)
+
+        # Add unique bigrams
+        for phrase, count in bigram_counts.most_common(50):
+            if count >= min_count and phrase not in common:
+                words = set(phrase.split())
+                if not words.issubset(stop_patterns):
+                    common.append(phrase)
+
+        return common[:15]
+
+    def _find_slang_in_words(self, words: List[str]) -> List[str]:
+        """Find slang words used in the comments"""
+        word_counts = Counter(words)
+        found_slang = []
+
+        for slang in self.KNOWN_SLANG:
+            count = word_counts.get(slang, 0)
+            if count >= 2:
+                found_slang.append(slang)
+
+        return found_slang
+
+    def _find_signature_idioms(self, trigrams: List[str], min_count: int = 3) -> List[str]:
+        """Find phrases that might be specific to this subreddit"""
+        trigram_counts = Counter(trigrams)
+        return [phrase for phrase, count in trigram_counts.most_common(10) if count >= min_count]
+
+    async def _enhance_with_ai_analysis(self, basic_profile: Dict, sample_comments: List[Dict]) -> Dict[str, Any]:
+        """Use GPT-4 to extract nuanced tone, sentiment, and style insights"""
+        if not sample_comments:
+            return basic_profile
+
+        sample_text = "\n\n---\n\n".join([c.get('body', '')[:300] for c in sample_comments[:15]])
+
         try:
             response = self.openai.chat.completions.create(
                 model="gpt-4-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a linguistic analyst. Analyze the tone, sentiment, and writing style of Reddit comments."},
-                    {"role": "user", "content": f"""Analyze these comments from r/{basic_profile['subreddit']}:
+                    {
+                        "role": "system",
+                        "content": "You are a linguistic analyst. Analyze Reddit comments and return JSON only."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Analyze these comments from r/{basic_profile['subreddit']}:
 
 {sample_text}
 
-Provide a JSON response with:
-1. "tone": Overall emotional tone (3-5 words)
-2. "grammar_style": Description of grammar patterns
-3. "sentiment_distribution": Breakdown of emotions (percentages)
-4. "signature_idioms": List of 5-10 unique phrases/idioms this community uses
-5. "formality_level": LOW/MEDIUM/HIGH
-6. "voice_description": 2-sentence description of how this community writes
+Return a JSON object with ONLY these fields:
+{{
+    "tone": "3-5 word description of emotional tone",
+    "grammar_style": "brief description of grammar patterns",
+    "sentiment_distribution": {{"supportive": 40, "neutral": 30, "critical": 20, "other": 10}},
+    "formality_level": "LOW or MEDIUM or HIGH",
+    "voice_description": "2 sentences describing how this community writes"
+}}
 
-Format as valid JSON only."""}
+Return ONLY valid JSON, no other text."""
+                    }
                 ],
                 temperature=0.3,
-                max_tokens=500
+                max_tokens=300
             )
-            
+
             import json
             ai_analysis = json.loads(response.choices[0].message.content)
-            
+
             # Merge AI analysis with basic profile
-            return {**basic_profile, **ai_analysis}
-            
+            basic_profile['tone'] = ai_analysis.get('tone', 'helpful, casual')
+            basic_profile['grammar_style'] = ai_analysis.get('grammar_style', 'conversational')
+            basic_profile['sentiment_distribution'] = ai_analysis.get('sentiment_distribution', {})
+            basic_profile['formality_level'] = ai_analysis.get('formality_level', 'LOW')
+            basic_profile['voice_description'] = ai_analysis.get('voice_description', '')
+
+            # Update dominant_tone based on AI analysis
+            if 'tone' in ai_analysis:
+                basic_profile['dominant_tone'] = ai_analysis['tone']
+
+            return basic_profile
+
         except Exception as e:
-            logger.error(f"Error in AI analysis: {e}")
-            # Return basic profile with defaults
-            return {
-                **basic_profile,
-                "tone": "supportive, casual, authentic",
-                "grammar_style": "conversational with occasional fragments",
-                "sentiment_distribution": {"supportive": 40, "frustrated": 30, "hopeful": 20, "tired": 10},
-                "signature_idioms": ["honestly", "literally", "I feel you", "solidarity"],
-                "formality_level": "LOW",
-                "voice_description": "Community members write like tired friends sharing real experiences. Grammar is casual with emotional authenticity."
-            }
-    
+            logger.warning(f"AI analysis failed, using defaults: {e}")
+            # Return profile with default values
+            basic_profile['tone'] = 'supportive, casual'
+            basic_profile['grammar_style'] = 'conversational with informal patterns'
+            basic_profile['sentiment_distribution'] = {"supportive": 50, "neutral": 30, "critical": 20}
+            basic_profile['formality_level'] = 'LOW'
+            basic_profile['voice_description'] = f"r/{basic_profile['subreddit']} users write casually and helpfully."
+            return basic_profile
+
     def _get_default_voice_profile(self, subreddit_name: str) -> Dict[str, Any]:
-        """Return default voice profile if analysis fails"""
+        """Return default voice profile when crawling fails"""
         return {
             "subreddit": subreddit_name,
-            "sample_size": 0,
-            "avg_sentence_length": 12.0,
-            "avg_word_length": 5.0,
-            "common_phrases": ["I think", "honestly", "literally", "that's why"],
-            "typo_frequency": 0.02,
-            "uses_emojis": "occasional",
-            "exclamation_frequency": 0.15,
-            "question_frequency": 0.10,
+            "avg_word_count": 75,
+            "word_count_range": {"min": 30, "max": 200},
+            "short_reply_probability": 0.4,
+            "capitalization_style": "mixed",
+            "lowercase_start_pct": 25,
+            "common_phrases": ["honestly", "in my experience", "i think", "typically"],
+            "slang_examples": [],
+            "signature_idioms": [],
+            "emoji_frequency": "rare",
+            "common_emojis": [],
+            "example_openers": [],
+            "example_closers": [],
+            "question_frequency": 0.15,
+            "exclamation_usage_pct": 8,
+            "hedging_frequency": 0.02,
+            "formality_score": 0.35,
+            "dominant_tone": "helpful, casual",
             "tone": "supportive, conversational",
             "grammar_style": "casual with informal patterns",
-            "sentiment_distribution": {"supportive": 50, "neutral": 30, "concerned": 20},
-            "signature_idioms": ["honestly", "literally", "same here"],
+            "sentiment_distribution": {"supportive": 50, "neutral": 30, "critical": 20},
             "formality_level": "LOW",
-            "voice_description": "Default casual Reddit community voice. Friendly and authentic.",
-            "analyzed_at": datetime.utcnow().isoformat()
+            "voice_description": "Default Reddit community voice. Friendly and authentic.",
+            "sample_comments": [],
+            "users_analyzed": 0,
+            "comments_analyzed": 0,
+            "is_fallback": True,
+            "last_crawl_date": datetime.utcnow().isoformat()
         }
-    
+
     async def _save_voice_profile(self, subreddit_name: str, client_id: str, profile: Dict) -> None:
-        """Save voice profile to database"""
+        """Save voice profile to database with ALL fields"""
         try:
+            subreddit_lower = subreddit_name.lower()
+
+            # Build complete record
             data = {
                 "client_id": client_id,
-                "subreddit": subreddit_name,
+                "subreddit": subreddit_lower,
+                "redditor_username": f"__subreddit_voice_{subreddit_lower}__",
+
+                # Store complete profile as JSONB
                 "voice_profile": profile,
-                "created_at": datetime.utcnow().isoformat()
+
+                # Also store key fields as columns for easier querying
+                "dominant_tone": profile.get('dominant_tone', 'helpful'),
+                "formality_score": profile.get('formality_score', 0.35),
+                "lowercase_start_pct": profile.get('lowercase_start_pct', 25),
+                "exclamation_usage_pct": profile.get('exclamation_usage_pct', 8),
+
+                # Metadata
+                "users_analyzed": profile.get('users_analyzed', 0),
+                "comments_analyzed": profile.get('comments_analyzed', 0),
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
             }
 
-            # Upsert to voice_profiles table
-            self.supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+            # Delete existing profile for this client/subreddit
+            try:
+                self.supabase.table("voice_profiles")\
+                    .delete()\
+                    .eq("client_id", client_id)\
+                    .eq("subreddit", subreddit_lower)\
+                    .execute()
+            except Exception:
+                pass
 
-            logger.info(f"Saved voice profile for r/{subreddit_name}")
+            # Insert new profile
+            self.supabase.table("voice_profiles").insert(data).execute()
+            logger.info(f"✅ Saved voice profile for r/{subreddit_name}: {profile.get('comments_analyzed', 0)} comments analyzed")
 
         except Exception as e:
-            logger.error(f"Error saving voice profile: {e}")
+            logger.error(f"Error saving voice profile for r/{subreddit_name}: {e}")
             raise
 
 
-async def build_client_voice_database(client_id: str) -> Dict[str, Any]:
+async def build_client_voice_database(client_id: str, user_limit: int = 100, comments_per_user: int = 20) -> Dict[str, Any]:
     """
-    Build complete voice database for a client's target subreddits
-    
+    Build complete voice database for a client's target subreddits.
+
     Args:
         client_id: UUID of client
-        
+        user_limit: Users to analyze per subreddit
+        comments_per_user: Comments to collect per user
+
     Returns:
         Summary of voice profiles created
     """
     worker = VoiceDatabaseWorker()
-    
-    # Get client's subreddits from client_subreddit_config table
-    # (This is where onboarding stores target subreddits)
+    worker.TOP_USERS_PER_SUBREDDIT = user_limit
+    worker.COMMENTS_PER_USER = comments_per_user
+
     supabase = get_supabase_client()
-    subreddits_response = supabase.table("client_subreddit_config").select("subreddit_name").eq("client_id", client_id).eq("is_active", True).execute()
+
+    # Get subreddits from client_subreddit_config
+    subreddits_response = supabase.table("client_subreddit_config")\
+        .select("subreddit_name")\
+        .eq("client_id", client_id)\
+        .eq("is_active", True)\
+        .execute()
 
     subreddits = [s['subreddit_name'] for s in subreddits_response.data] if subreddits_response.data else []
 
-    # Fallback: If no subreddit config, try to get unique subreddits from opportunities
+    # Fallback: Get unique subreddits from opportunities
     if not subreddits:
-        logger.info("No subreddit config found, falling back to opportunities table")
-        opps_response = supabase.table("opportunities").select("subreddit").eq("client_id", client_id).execute()
+        logger.info("No subreddit config found, checking opportunities table")
+        opps_response = supabase.table("opportunities")\
+            .select("subreddit")\
+            .eq("client_id", client_id)\
+            .execute()
         if opps_response.data:
-            subreddits = list(set([o['subreddit'] for o in opps_response.data if o.get('subreddit')]))[:10]  # Top 10 unique
+            subreddits = list(set([o['subreddit'] for o in opps_response.data if o.get('subreddit')]))[:10]
             logger.info(f"Found {len(subreddits)} unique subreddits from opportunities")
-    
-    logger.info(f"Building voice database for {len(subreddits)} subreddits")
-    
+
+    if not subreddits:
+        return {
+            "client_id": client_id,
+            "total_subreddits": 0,
+            "successful": 0,
+            "failed": 0,
+            "results": [],
+            "message": "No subreddits configured for this client"
+        }
+
+    logger.info(f"🎤 Building voice database for {len(subreddits)} subreddits")
+
     results = []
     for subreddit in subreddits:
         try:
-            profile = await worker.analyze_subreddit_voice(subreddit, client_id)
+            profile = await worker.analyze_subreddit_voice(
+                subreddit,
+                client_id,
+                user_limit=user_limit,
+                comments_per_user=comments_per_user
+            )
             results.append({
                 "subreddit": subreddit,
                 "status": "success",
-                "sample_size": profile.get('sample_size', 0)
+                "comments_analyzed": profile.get('comments_analyzed', 0),
+                "users_analyzed": profile.get('users_analyzed', 0)
             })
         except Exception as e:
             logger.error(f"Failed to build voice profile for r/{subreddit}: {e}")
@@ -311,7 +711,7 @@ async def build_client_voice_database(client_id: str) -> Dict[str, Any]:
                 "status": "failed",
                 "error": str(e)
             })
-    
+
     return {
         "client_id": client_id,
         "total_subreddits": len(subreddits),

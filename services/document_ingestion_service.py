@@ -384,7 +384,7 @@ class DocumentIngestionService:
                 "chunk_id": chunk_id,
                 "client_id": client_id,
                 "embedding": embedding,
-                "model": "text-embedding-3-small",
+                "model": "text-embedding-ada-002",  # MUST match _generate_embedding()
                 "document_type": document_type,
                 "created_at": datetime.utcnow().isoformat()
             }
@@ -422,18 +422,21 @@ class DocumentIngestionService:
     def _generate_embedding(self, text: str) -> List[float]:
         """
         Generate OpenAI embedding for text
-        
+
+        CRITICAL: Must use text-embedding-ada-002 to match knowledge_matchback_service.py
+        Both ingestion and retrieval MUST use the same embedding model!
+
         Args:
             text: Text to embed
-            
+
         Returns:
-            Embedding vector
+            Embedding vector (1536 dimensions)
         """
         response = self.openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
+            model="text-embedding-ada-002",  # MUST match retrieval model
+            input=text[:8000]  # Truncate to avoid token limits
         )
-        
+
         return response.data[0].embedding
     
     def search_similar_content(

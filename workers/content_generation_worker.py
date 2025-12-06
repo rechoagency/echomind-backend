@@ -125,21 +125,44 @@ class ContentGenerationWorker:
     
     # Fallback voice profile for when subreddit-specific profile is missing
     FALLBACK_VOICE_PROFILE = {
-        "tone": "casual, helpful, conversational",
-        "grammar_style": "informal but clear",
-        "dominant_tone": "supportive",
-        "avg_sentence_length": 15,
-        "typo_frequency": 0.02,
-        "lowercase_start_pct": 30,
-        "exclamation_usage_pct": 8,
-        "exclamation_frequency": 0.1,
-        "question_frequency": 0.15,
-        "common_phrases": ["honestly", "IMO", "FWIW", "hope this helps", "in my experience"],
-        "signature_idioms": ["honestly", "literally", "same here", "I feel you"],
+        # Length patterns
+        "avg_word_count": 75,
+        "word_count_range": {"min": 30, "max": 200},
+        "short_reply_probability": 0.4,
+        "avg_sentence_length": 12,
+
+        # Grammar patterns
+        "capitalization_style": "mixed",
+        "lowercase_start_pct": 25,
+
+        # Lexical patterns
+        "common_phrases": ["honestly", "in my experience", "typically", "depends on"],
+        "slang_examples": [],
+        "signature_idioms": [],
+
+        # Emoji patterns
+        "emoji_frequency": "rare",
+        "common_emojis": [],
+
+        # Tone patterns
+        "dominant_tone": "helpful, direct",
+        "tone": "supportive, conversational",
+        "grammar_style": "casual with informal patterns",
+        "formality_score": 0.35,
         "formality_level": "LOW",
-        "formality_score": 0.3,
-        "uses_emojis": "occasional",
-        "voice_description": "Generic Reddit community voice - casual, helpful, and authentic.",
+
+        # Content patterns
+        "example_openers": [],
+        "example_closers": [],
+        "question_frequency": 0.1,
+        "exclamation_usage_pct": 5,
+        "hedging_frequency": 0.02,
+
+        # Metadata
+        "voice_description": "Default Reddit community voice. Friendly and authentic.",
+        "sample_comments": [],
+        "users_analyzed": 0,
+        "comments_analyzed": 0,
         "is_fallback": True
     }
 
@@ -181,187 +204,360 @@ class ContentGenerationWorker:
         client_data: Optional[Dict] = None
     ) -> str:
         """
-        Build prompt for GPT content generation WITH slider controls AND subreddit ownership logic
+        Build the complete prompt for GPT-4 content generation.
+
+        This prompt has FIVE layers:
+        1. GLOBAL RULES - Same for all content (authenticity, no fake experience)
+        2. DYNAMIC VOICE - From learned subreddit patterns (changes per subreddit)
+        3. DYNAMIC KNOWLEDGE - From brand's RAG (changes per client)
+        4. THREAD CONTEXT - The specific post being replied to
+        5. BRAND MENTION - Instructions for brand/product mentions
+
+        Returns:
+            Complete prompt string for GPT-4
         """
         thread_title = opportunity.get("thread_title", "")
-        thread_content = opportunity.get("original_post_text", "")  # Use correct column name
-        subreddit = opportunity.get("subreddit", "")  # Use correct column name
-        
+        thread_content = opportunity.get("original_post_text", "")
+        subreddit = opportunity.get("subreddit", "")
+
         # Check if brand owns this subreddit
         owned_subreddits = []
         if client_data:
             owned_subreddits = client_data.get('owned_subreddits', []) or client_data.get('brand_owned_subreddits', [])
-        
         is_owned = subreddit in owned_subreddits or f"r/{subreddit}" in owned_subreddits
-        
-        # Base prompt with ownership-specific strategy
-        if is_owned:
-            # OWNED SUBREDDIT: Promotional seed content strategy
-            prompt = f"""You are the moderator/community manager of r/{subreddit}, a brand-owned community.
 
-**Your Goal:** Create engaging seed content to draw users and spark conversation.
+        # ═══════════════════════════════════════════════════════════════════════
+        # LAYER 1: GLOBAL AUTHENTICITY RULES (same for ALL content)
+        # ═══════════════════════════════════════════════════════════════════════
 
-**Thread Title:** {thread_title}
+        global_rules = f"""
+══════════════════════════════════════════════════════════════════════════════
+AUTHENTICITY RULES (MANDATORY - APPLY TO ALL CONTENT)
+══════════════════════════════════════════════════════════════════════════════
 
-**Thread Content:** {thread_content}
+You are writing a Reddit response on behalf of {brand_name}, posting from a brand-affiliated account.
 
-**Your Task:** Write promotional seed content that:
-1. Highlights {brand_name} products/services naturally
-2. Asks engaging questions to encourage community discussion
-3. Shares helpful tips, guides, or resources related to your brand
-4. Promotes upcoming sales, new products, or brand initiatives
-5. Builds excitement and community engagement
+CRITICAL - WHAT YOU ARE:
+- An industry professional who works in this space
+- Someone with genuine expertise who participates in Reddit communities
+- A helpful community member who happens to have brand knowledge
 
-**Tone:** Friendly brand voice, community-building, promotional but authentic
+CRITICAL - WHAT YOU ARE NOT:
+- A fake customer pretending to have bought the product
+- A shill writing fake testimonials
+- A corporate PR bot
+
+MANDATORY RULES:
+
+1. NEVER FAKE PERSONAL PRODUCT EXPERIENCE
+   ❌ FORBIDDEN: "I bought this and loved it!", "When I got mine...", "I've been using this for months"
+   ❌ FORBIDDEN: "I had the same problem!", "This happened to me too!", "I dealt with this"
+   ✅ CORRECT: "You'll find that...", "Most people report...", "The typical experience is..."
+   ✅ CORRECT: "Based on what we see...", "Customers typically...", "In this situation..."
+
+2. USE SECOND PERSON, NOT FIRST PERSON
+   ❌ FORBIDDEN: "I recommend...", "I would suggest...", "I think you should..."
+   ✅ CORRECT: "You'll want to...", "Consider...", "The best approach is..."
+   ✅ ACCEPTABLE: "We make [product]" or "Our [product]" - this is honest, not deceptive
+
+3. NO CORPORATE MARKETING PHRASES
+   ❌ FORBIDDEN: "That's a great question!", "Thanks for reaching out!"
+   ❌ FORBIDDEN: "Hope this helps!", "We're happy to help!", "Feel free to ask!"
+   ❌ FORBIDDEN: "We pride ourselves on...", "Our commitment to quality..."
+   ✅ CORRECT: Just provide the helpful information directly, no preamble or sign-off
+
+4. BE HONEST ABOUT LIMITATIONS
+   ✅ CORRECT: "This won't work for every situation - specifically..."
+   ✅ CORRECT: "The main downside is...", "One thing to be aware of..."
+   This builds credibility and trust.
+
+5. EXPERTISE WITHOUT ARROGANCE
+   ✅ CORRECT: "The main thing with [topic] is..." (sharing knowledge)
+   ✅ CORRECT: "What most people don't realize is..." (insider info)
+   ❌ FORBIDDEN: "Actually, you're wrong about..." (condescending)
+"""
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # LAYER 2: DYNAMIC VOICE (learned from subreddit users)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        if voice_profile and not voice_profile.get('is_fallback'):
+            # Use ACTUAL learned patterns from the voice_profile JSONB column
+            vp = voice_profile.get('voice_profile', voice_profile)
+
+            # Length patterns
+            avg_words = vp.get('avg_word_count') or 75
+            word_range = vp.get('word_count_range') or {"min": 30, "max": 200}
+            short_reply_prob = vp.get('short_reply_probability') or 0.4
+
+            # Grammar patterns
+            cap_style = vp.get('capitalization_style') or 'mixed'
+            lowercase_pct = vp.get('lowercase_start_pct') or 25
+            formality = vp.get('formality_score') or 0.35
+            formality_level = vp.get('formality_level') or 'LOW'
+
+            # Lexical patterns
+            common_phrases = vp.get('common_phrases') or []
+            slang = vp.get('slang_examples') or []
+            idioms = vp.get('signature_idioms') or []
+
+            # Emoji patterns
+            emoji_freq = vp.get('emoji_frequency') or 'rare'
+            common_emojis = vp.get('common_emojis') or []
+
+            # Tone patterns
+            tone = vp.get('tone') or vp.get('dominant_tone') or 'helpful'
+            grammar_style = vp.get('grammar_style') or 'conversational'
+
+            # Content patterns
+            openers = vp.get('example_openers') or []
+            closers = vp.get('example_closers') or []
+            exclamation_pct = vp.get('exclamation_usage_pct') or 5
+            question_freq = vp.get('question_frequency') or 0.1
+
+            # Metadata
+            comments_analyzed = vp.get('comments_analyzed') or 0
+            users_analyzed = vp.get('users_analyzed') or 0
+            sample_comments = vp.get('sample_comments') or []
+            voice_description = vp.get('voice_description') or ''
+
+            # Format lists
+            phrases_str = ', '.join(f'"{p}"' for p in common_phrases[:8]) if common_phrases else 'none identified'
+            slang_str = ', '.join(slang[:6]) if slang else 'minimal slang'
+            idioms_str = ', '.join(f'"{i}"' for i in idioms[:5]) if idioms else 'none identified'
+            openers_str = ', '.join(f'"{o}"' for o in openers[:5]) if openers else 'no specific patterns'
+            emojis_str = ', '.join(common_emojis[:5]) if common_emojis else 'none'
+
+            voice_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+SUBREDDIT VOICE PROFILE (LEARNED FROM r/{subreddit} USERS)
+══════════════════════════════════════════════════════════════════════════════
+
+These patterns were extracted from analyzing {comments_analyzed} real comments
+by {users_analyzed} users in r/{subreddit}. MATCH THEM.
+
+LENGTH:
+- Average reply length: {avg_words} words
+- Typical range: {word_range.get('min', 30)} to {word_range.get('max', 200)} words
+- Short replies (<50 words): {round(short_reply_prob * 100)}% of posts
+- Keep your response within this range unless the topic requires more detail
+
+GRAMMAR & CAPITALIZATION:
+- Style: {cap_style}
+- {lowercase_pct}% of sentences start lowercase (match this roughly)
+- {"Use sentence fragments freely - users here don't always write complete sentences" if formality < 0.3 else "Write in complete sentences"}
+
+FORMALITY: {formality} (0=very casual, 1=very formal)
+- {"Very casual - contractions, relaxed grammar, conversational" if formality < 0.3 else "Moderately formal - clear but not stiff" if formality < 0.6 else "More formal - proper grammar, professional tone"}
+
+COMMON PHRASES IN THIS COMMUNITY:
+{phrases_str}
+→ Use 1-2 of these naturally if they fit
+
+SLANG USED HERE:
+{slang_str}
+→ Use if natural, don't force it
+
+SUBREDDIT-SPECIFIC IDIOMS:
+{idioms_str}
+
+EMOJI USAGE: {emoji_freq}
+{f"Common emojis: {emojis_str}" if common_emojis else ""}
+→ {"Use emojis occasionally" if emoji_freq in ['occasional', 'frequent'] else "Avoid emojis or use very sparingly"}
+
+TONE: {tone}
+- Grammar style: {grammar_style}
+→ Match this tone in your response
+
+EXAMPLE OPENERS USED IN THIS SUB:
+{openers_str}
+→ Consider starting similarly (but don't copy exactly)
+
+EXCLAMATION MARKS: {exclamation_pct}% of sentences
+→ {"Use exclamations freely" if exclamation_pct > 15 else "Use exclamations sparingly" if exclamation_pct > 5 else "Avoid exclamation marks mostly"}
+
+{f'VOICE SUMMARY: {voice_description}' if voice_description else ''}
+"""
+
+            # Add sample comments for reference
+            if sample_comments:
+                voice_section += f"""
+
+EXAMPLE REAL COMMENTS FROM r/{subreddit} (for style reference only):
+"""
+                for i, sample in enumerate(sample_comments[:3], 1):
+                    sample_text = sample.get('text', '')[:250]
+                    voice_section += f'\n{i}. "{sample_text}..."'
+
+        else:
+            # Fallback for when no profile exists
+            voice_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+SUBREDDIT VOICE (r/{subreddit} - DEFAULT REDDIT STYLE)
+══════════════════════════════════════════════════════════════════════════════
+
+No specific voice profile available. Use general Reddit casual style:
+- Conversational, helpful tone
+- 50-150 words typical
+- Contractions OK
+- Minimal emojis
+- Get to the point quickly
+"""
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # LAYER 3: DYNAMIC KNOWLEDGE (from brand's RAG)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        if knowledge_insights and len(knowledge_insights) > 0:
+            knowledge_text = "\n\n".join([
+                f"• {insight.get('excerpt', insight.get('chunk_text', ''))[:500]}"
+                for insight in knowledge_insights[:5]
+            ])
+            knowledge_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+BRAND KNOWLEDGE (USE WHEN RELEVANT)
+══════════════════════════════════════════════════════════════════════════════
+
+The following information is from {brand_name}'s knowledge base. Use it when relevant,
+but don't force it if it doesn't fit the question.
+
+{knowledge_text}
+
+RULES FOR USING THIS KNOWLEDGE:
+- Incorporate naturally, don't dump facts
+- Prefer specific details over vague claims
+- Frame as "research shows..." or "data indicates..." (not "our research")
+- If the thread isn't about these topics, don't mention them
+- This positions you as knowledgeable, not as a marketer
 """
         else:
-            # NOT OWNED: Careful, objective community reply strategy
-            prompt = f"""You are a helpful Reddit community member responding in r/{subreddit}.
+            knowledge_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+BRAND KNOWLEDGE
+══════════════════════════════════════════════════════════════════════════════
 
-**Thread Title:** {thread_title}
-
-**Thread Content:** {thread_content}
-
-**Your Task:** Write a natural, empathetic response that:
-1. Shows genuine understanding of their situation
-2. Provides helpful advice or shares personal experience
-3. {'Subtly mentions ' + brand_name + ' in a natural way' if mention_brand else 'Provides helpful advice WITHOUT mentioning ' + brand_name}
-
-"""
-        
-        # GLOBAL AUTHENTICITY RULES (always applied)
-        prompt += f"""
-**AUTHENTICITY RULES (non-negotiable):**
-- You represent {brand_name} - NEVER pretend to be a random customer
-- NEVER say "I bought this", "I used this", "I had this problem too"
-- Use "you/your" when giving advice: "when you install...", "you'll find..."
-- NO corporate phrases: "Great question!", "Hope this helps!", "Thanks for asking!"
-- Be honest about limitations - builds credibility
-- Sound like a knowledgeable community member, not a marketer
-
+No specific product knowledge retrieved for this thread.
+Provide helpful general expertise based on the topic.
 """
 
-        # Add COMPLETE voice profile from learned subreddit patterns
-        if voice_profile:
-            # Extract all learned patterns (with fallbacks for None values)
-            # Voice profile may be stored as JSONB in 'voice_profile' column or as individual columns
-            vp = voice_profile.get('voice_profile', voice_profile)  # Handle both storage formats
+        # ═══════════════════════════════════════════════════════════════════════
+        # LAYER 4: THREAD CONTEXT
+        # ═══════════════════════════════════════════════════════════════════════
 
-            avg_sentence_len = vp.get("avg_sentence_length") or 12
-            avg_word_len = vp.get("avg_word_length") or 5
-            common_phrases = vp.get("common_phrases") or []
-            signature_idioms = vp.get("signature_idioms") or []
-            typo_freq = vp.get("typo_frequency") or 0.02
-            uses_emojis = vp.get("uses_emojis") or "occasional"
-            exclamation_freq = vp.get("exclamation_frequency") or 0.1
-            question_freq = vp.get("question_frequency") or 0.1
-            tone = vp.get("tone") or vp.get("dominant_tone") or "supportive"
-            grammar_style = vp.get("grammar_style") or "conversational"
-            formality_level = vp.get("formality_level") or "LOW"
-            voice_description = vp.get("voice_description") or ""
-            sample_size = vp.get("sample_size") or 0
+        thread_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+THREAD TO RESPOND TO
+══════════════════════════════════════════════════════════════════════════════
 
-            # Format lists for prompt
-            phrases_str = ", ".join(f'"{p}"' for p in common_phrases[:8]) if common_phrases else "none learned"
-            idioms_str = ", ".join(f'"{i}"' for i in signature_idioms[:6]) if signature_idioms else "none learned"
+Subreddit: r/{subreddit}
+Title: {thread_title}
 
-            prompt += f"""**VOICE PATTERNS (learned from {sample_size} real posts in r/{subreddit}):**
-
-Writing Metrics:
-- Average sentence length: {avg_sentence_len} words (match this closely)
-- Typo frequency: {round(typo_freq * 100, 1)}% of words (include natural typos if > 2%)
-
-Tone & Style:
-- Emotional tone: {tone}
-- Grammar style: {grammar_style}
-- Formality: {formality_level}
-- Emoji usage: {uses_emojis}
-- Exclamation frequency: {round(exclamation_freq * 100)}% of sentences
-- Question frequency: {round(question_freq * 100)}% of sentences
-
-Authentic Phrases (use 1-2 naturally):
-- Common phrases: {phrases_str}
-- Community idioms: {idioms_str}
-
-{f'Voice summary: {voice_description}' if voice_description else ''}
-
-IMPORTANT: These patterns were extracted from analyzing REAL users in r/{subreddit}. Match their writing style exactly.
-
+Post Content:
+{thread_content[:2000] if thread_content else '[No post content]'}
 """
-        
-        # CRITICAL: Add knowledge base insights for ALL posts (thought leadership)
-        if knowledge_insights and len(knowledge_insights) > 0:
-            prompt += """\n**UNIQUE DATA & RESEARCH (from your company's knowledge base):**
 
-You have access to proprietary research, case studies, and data that most people don't have. Use these insights to add credibility and unique value to your response:
+        # ═══════════════════════════════════════════════════════════════════════
+        # LAYER 5: BRAND MENTION INSTRUCTIONS
+        # ═══════════════════════════════════════════════════════════════════════
 
+        if is_owned:
+            # Brand-owned subreddit - promotional allowed
+            brand_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+BRAND MENTION (OWNED SUBREDDIT)
+══════════════════════════════════════════════════════════════════════════════
+
+This is a {brand_name}-owned community. You may be promotional:
+- Highlight {brand_name} products and services
+- Use official brand voice
+- Include calls-to-action
+- Share brand news and updates
 """
-            for i, insight in enumerate(knowledge_insights[:3], 1):
-                excerpt = insight.get('excerpt', '')
-                source = insight.get('source_filename', 'Internal Research')
-                relevance = insight.get('relevance_percentage', 0)
-                
-                prompt += f"{i}. **Insight from {source}** (relevance: {relevance}%):\n"
-                prompt += f"   {excerpt}\n\n"
-            
-            prompt += """**HOW TO USE THESE INSIGHTS:**
-- Naturally weave this data into your response when contextually relevant
-- DO NOT explicitly mention the company name or say "our research" during karma building phase
-- Frame it as "research shows..." or "data indicates..." or "studies have found..."
-- This positions you as a knowledgeable expert, not a marketer
-- Reddit, Google, and LLMs value unique information that can't be found elsewhere
-- This is KEY for building karma and trust before any brand mentions
+        elif mention_brand or mention_product:
+            brand_section = f"""
+══════════════════════════════════════════════════════════════════════════════
+BRAND MENTION GUIDANCE
+══════════════════════════════════════════════════════════════════════════════
 
+{"You MAY mention " + brand_name + " in this response." if mention_brand else ""}
+{"You MAY mention specific products if relevant." if mention_product else ""}
+
+RULES:
+- Mention as ONE option, not the only solution
+- Be honest about pros AND cons
+- Frame as "we make" or "our product" - NOT as fake customer testimonial
+- Don't oversell - let the helpfulness speak for itself
+
+Example good mention:
+"For that room size, you'd want something in the 5000 BTU range. We make the Sideline series
+for exactly this use case, but honestly any unit in that range will work similarly."
 """
-        
+        else:
+            brand_section = """
+══════════════════════════════════════════════════════════════════════════════
+BRAND MENTION
+══════════════════════════════════════════════════════════════════════════════
+
+Do NOT mention the brand or specific products in this response.
+Focus purely on being helpful with general expertise.
+"""
+
+        # Add explicit instructions if present
+        explicit_instructions = client_settings.get('explicit_instructions', '')
+        if explicit_instructions:
+            brand_section += f"""
+
+CRITICAL COMPLIANCE GUIDELINES (MUST FOLLOW):
+{explicit_instructions}
+
+These guidelines take precedence over all other instructions.
+"""
+
         # Add product context if should mention
         if mention_product and product_matches:
             matches = product_matches.get("matches", [])
             if matches:
-                prompt += "**Relevant Product Information (mention naturally if appropriate):**\n\n"
+                brand_section += "\n\n**Relevant Product Information (mention naturally if appropriate):**\n"
                 for i, match in enumerate(matches[:2], 1):
                     product_info = match.get("product_info", "")
                     relevance = match.get("relevance_score", 0)
-                    prompt += f"{i}. {product_info[:300]}... (relevance: {relevance})\n\n"
-        
-        # CRITICAL: Add special instructions
-        explicit_instructions = client_settings.get('explicit_instructions', '')
-        if explicit_instructions:
-            prompt += f"""
-**CRITICAL COMPLIANCE GUIDELINES (MUST FOLLOW):**
-{explicit_instructions}
+                    brand_section += f"{i}. {product_info[:300]}... (relevance: {relevance})\n"
 
-These guidelines take precedence over all other instructions.
+        # ═══════════════════════════════════════════════════════════════════════
+        # FINAL INSTRUCTION
+        # ═══════════════════════════════════════════════════════════════════════
 
+        final_instruction = f"""
+══════════════════════════════════════════════════════════════════════════════
+YOUR TASK
+══════════════════════════════════════════════════════════════════════════════
+
+Write a single Reddit reply that:
+1. Answers the user's question/addresses their situation helpfully
+2. Sounds like a real r/{subreddit} community member (use the voice patterns above)
+3. Incorporates brand knowledge naturally IF relevant
+4. Follows ALL authenticity rules (no fake experience, no marketing speak)
+5. Stays within the typical word count for this subreddit
+
+Output ONLY the reply text. No explanations, no meta-commentary.
 """
-        
-        # Final instructions (different for owned vs not-owned)
-        if is_owned:
-            # Owned subreddit: More promotional, community-building
-            prompt += """**Posting Guidelines for Brand-Owned Community:**
-- COMMUNITY FIRST: Build genuine value and engagement
-- PROMOTIONAL ENCOURAGED: Highlight brand benefits, products, sales
-- CALL-TO-ACTION OK: "Check out our...", "Visit our store...", "Join our newsletter..."
-- BRAND VOICE: Use official brand tone and messaging
-- ENGAGE: Ask questions, request feedback, encourage discussion
-- SHOWCASE: Share product highlights, customer stories, brand news
 
-Write the engaging seed content now:"""
-        else:
-            # Not owned: Subtle, community-friendly, no hard selling
-            prompt += """**Important Guidelines (Community Subreddit):**
-- BE AUTHENTIC: Sound like a real person sharing experience, not an ad
-- BE HELPFUL FIRST: Address their problem genuinely before any product/brand mention
-- BE SUBTLE: If mentioning a product or brand, do it naturally ("I've had good results with...", "something that helped me was...")
-- BE HONEST: Add disclaimers like "not sponsored" or "just my experience"
-- MATCH THE TONE: Use the community's voice style
-- BE BRIEF: 2-4 sentences max, Reddit users prefer concise responses
-- NO HARD SELLING: Never use sales language or call-to-actions
-- COMMUNITY RULES: Respect the community, don't spam or over-promote
+        # Combine all sections
+        full_prompt = f"""
+{global_rules}
 
-Write the response now:"""
-        
-        return prompt
+{voice_section}
+
+{knowledge_section}
+
+{thread_section}
+
+{brand_section}
+
+{final_instruction}
+"""
+
+        return full_prompt
     
     def generate_content_for_client(
         self,
