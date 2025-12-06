@@ -117,9 +117,10 @@ class KnowledgeMatchbackService:
             Embedding vector or None if failed
         """
         try:
-            # Use same model as product matchback for consistency
+            # CRITICAL: Must use same model as populate_embeddings.py script
+            # The stored embeddings use text-embedding-ada-002
             response = self.openai_client.embeddings.create(
-                model="text-embedding-3-small",
+                model="text-embedding-ada-002",
                 input=text[:8000]  # Truncate to avoid token limits
             )
             

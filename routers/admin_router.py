@@ -1321,9 +1321,9 @@ async def test_rag_search(request: dict):
         openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         supabase = get_supabase()
 
-        # Generate embedding
+        # Generate embedding - MUST match model used for stored embeddings
         embedding_response = openai_client.embeddings.create(
-            model="text-embedding-3-small",
+            model="text-embedding-ada-002",  # Same as populate_embeddings.py
             input=query[:8000]
         )
         query_embedding = embedding_response.data[0].embedding
