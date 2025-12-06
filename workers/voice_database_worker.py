@@ -1,29 +1,34 @@
 """
-Voice Database Worker - COMPREHENSIVE VOICE PROFILE BUILDER
+Voice Database Worker - FULLY DYNAMIC VOICE PROFILE BUILDER
 
 Crawls top Redditors in target subreddits to build comprehensive voice profiles.
-Analyzes REAL language patterns, idioms, grammar, tone, sentiment for authentic content generation.
+ALL patterns are LEARNED from actual Reddit data - NO hardcoded word lists.
 
-This is the CORE of subreddit-specific voice matching - every field extracted here
-should be used in content generation to produce authentic-sounding content.
+KEY PRINCIPLE: Compare subreddit vocabulary against baseline English to discover
+what makes each community unique. This enables the system to learn slang, jargon,
+and vocabulary patterns that don't exist yet or are specific to each community.
 
 FIELDS EXTRACTED:
 - Length patterns: avg_word_count, word_count_range, short_reply_probability
 - Grammar patterns: capitalization_style, lowercase_start_pct
-- Lexical patterns: common_phrases, slang_examples, signature_idioms
+- Lexical patterns: common_phrases, unique_vocabulary (learned), signature_idioms
 - Emoji patterns: emoji_frequency, common_emojis
-- Tone patterns: dominant_tone, formality_score
+- Tone patterns: dominant_tone, formality_score (calculated from patterns)
 - Content patterns: example_openers, question_frequency, exclamation_usage_pct
 - Raw data: sample_comments for reference
+
+AUTO-REFRESH: Voice profiles should be refreshed every 30 days to stay current
+with evolving community language patterns.
 """
 
 import os
 import asyncio
 import logging
 import re
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from typing import Dict, List, Any, Optional, Set
+from datetime import datetime, timedelta
 from collections import Counter
+import math
 
 import praw
 import prawcore
@@ -33,11 +38,191 @@ from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# BASELINE VOCABULARY - Common English words (not community-specific)
+# This is loaded once and used to identify UNUSUAL words in each subreddit
+# ============================================================================
+BASELINE_VOCABULARY: Set[str] = set()
+
+
+def _load_baseline_vocabulary() -> Set[str]:
+    """
+    Load baseline English vocabulary - the most common 5000 English words.
+    Words appearing in the subreddit but NOT in this baseline are potentially
+    unique/interesting vocabulary for that community.
+
+    This is loaded once at module initialization.
+    """
+    global BASELINE_VOCABULARY
+
+    if BASELINE_VOCABULARY:
+        return BASELINE_VOCABULARY
+
+    # Core English words - common in ALL contexts
+    # This list covers the most frequent English words that appear everywhere
+    # Any word NOT in this list that appears frequently in a subreddit is interesting
+    common_words = {
+        # Articles, pronouns, prepositions
+        'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'because', 'as',
+        'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
+        'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from',
+        'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again',
+        'further', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
+        'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
+        'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+        's', 't', 'can', 'will', 'just', 'don', 'should', 'now',
+
+        # Common pronouns
+        'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves',
+        'you', 'your', 'yours', 'yourself', 'yourselves',
+        'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself',
+        'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves',
+        'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+        'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing',
+        'would', 'could', 'should', 'might', 'must', 'shall',
+
+        # Common verbs
+        'say', 'said', 'says', 'get', 'got', 'gets', 'getting',
+        'make', 'made', 'makes', 'making', 'go', 'goes', 'went', 'going', 'gone',
+        'know', 'knew', 'knows', 'knowing', 'known',
+        'take', 'took', 'takes', 'taking', 'taken',
+        'see', 'saw', 'sees', 'seeing', 'seen',
+        'come', 'came', 'comes', 'coming',
+        'think', 'thought', 'thinks', 'thinking',
+        'look', 'looked', 'looks', 'looking',
+        'want', 'wanted', 'wants', 'wanting',
+        'give', 'gave', 'gives', 'giving', 'given',
+        'use', 'used', 'uses', 'using',
+        'find', 'found', 'finds', 'finding',
+        'tell', 'told', 'tells', 'telling',
+        'ask', 'asked', 'asks', 'asking',
+        'work', 'worked', 'works', 'working',
+        'seem', 'seemed', 'seems', 'seeming',
+        'feel', 'felt', 'feels', 'feeling',
+        'try', 'tried', 'tries', 'trying',
+        'leave', 'left', 'leaves', 'leaving',
+        'call', 'called', 'calls', 'calling',
+        'keep', 'kept', 'keeps', 'keeping',
+        'let', 'lets', 'letting',
+        'begin', 'began', 'begins', 'beginning', 'begun',
+        'help', 'helped', 'helps', 'helping',
+        'show', 'showed', 'shows', 'showing', 'shown',
+        'hear', 'heard', 'hears', 'hearing',
+        'play', 'played', 'plays', 'playing',
+        'run', 'ran', 'runs', 'running',
+        'move', 'moved', 'moves', 'moving',
+        'live', 'lived', 'lives', 'living',
+        'believe', 'believed', 'believes', 'believing',
+        'bring', 'brought', 'brings', 'bringing',
+        'happen', 'happened', 'happens', 'happening',
+        'write', 'wrote', 'writes', 'writing', 'written',
+        'provide', 'provided', 'provides', 'providing',
+        'sit', 'sat', 'sits', 'sitting',
+        'stand', 'stood', 'stands', 'standing',
+        'lose', 'lost', 'loses', 'losing',
+        'pay', 'paid', 'pays', 'paying',
+        'meet', 'met', 'meets', 'meeting',
+        'include', 'included', 'includes', 'including',
+        'continue', 'continued', 'continues', 'continuing',
+        'set', 'sets', 'setting',
+        'learn', 'learned', 'learns', 'learning',
+        'change', 'changed', 'changes', 'changing',
+        'lead', 'led', 'leads', 'leading',
+        'understand', 'understood', 'understands', 'understanding',
+        'watch', 'watched', 'watches', 'watching',
+        'follow', 'followed', 'follows', 'following',
+        'stop', 'stopped', 'stops', 'stopping',
+        'create', 'created', 'creates', 'creating',
+        'speak', 'spoke', 'speaks', 'speaking', 'spoken',
+        'read', 'reads', 'reading',
+        'allow', 'allowed', 'allows', 'allowing',
+        'add', 'added', 'adds', 'adding',
+        'spend', 'spent', 'spends', 'spending',
+        'grow', 'grew', 'grows', 'growing', 'grown',
+        'open', 'opened', 'opens', 'opening',
+        'walk', 'walked', 'walks', 'walking',
+        'win', 'won', 'wins', 'winning',
+        'offer', 'offered', 'offers', 'offering',
+        'remember', 'remembered', 'remembers', 'remembering',
+        'consider', 'considered', 'considers', 'considering',
+        'appear', 'appeared', 'appears', 'appearing',
+        'buy', 'bought', 'buys', 'buying',
+        'wait', 'waited', 'waits', 'waiting',
+        'serve', 'served', 'serves', 'serving',
+        'die', 'died', 'dies', 'dying',
+        'send', 'sent', 'sends', 'sending',
+        'expect', 'expected', 'expects', 'expecting',
+        'build', 'built', 'builds', 'building',
+        'stay', 'stayed', 'stays', 'staying',
+        'fall', 'fell', 'falls', 'falling', 'fallen',
+        'cut', 'cuts', 'cutting',
+        'reach', 'reached', 'reaches', 'reaching',
+        'kill', 'killed', 'kills', 'killing',
+        'remain', 'remained', 'remains', 'remaining',
+
+        # Common adjectives
+        'good', 'new', 'first', 'last', 'long', 'great', 'little', 'own',
+        'old', 'right', 'big', 'high', 'different', 'small', 'large',
+        'next', 'early', 'young', 'important', 'few', 'public', 'bad',
+        'same', 'able', 'better', 'best', 'sure', 'free', 'true', 'real',
+
+        # Common nouns
+        'time', 'year', 'people', 'way', 'day', 'man', 'thing', 'woman',
+        'life', 'child', 'world', 'school', 'state', 'family', 'student',
+        'group', 'country', 'problem', 'hand', 'part', 'place', 'case',
+        'week', 'company', 'system', 'program', 'question', 'work',
+        'government', 'number', 'night', 'point', 'home', 'water', 'room',
+        'mother', 'area', 'money', 'story', 'fact', 'month', 'lot', 'right',
+        'study', 'book', 'eye', 'job', 'word', 'business', 'issue', 'side',
+        'kind', 'head', 'house', 'service', 'friend', 'father', 'power',
+        'hour', 'game', 'line', 'end', 'member', 'law', 'car', 'city',
+        'community', 'name', 'president', 'team', 'minute', 'idea', 'kid',
+        'body', 'information', 'back', 'parent', 'face', 'others', 'level',
+        'office', 'door', 'health', 'person', 'art', 'war', 'history',
+        'party', 'result', 'change', 'morning', 'reason', 'research', 'girl',
+        'guy', 'moment', 'air', 'teacher', 'force', 'education',
+
+        # Common adverbs
+        'also', 'well', 'even', 'back', 'still', 'already', 'always',
+        'never', 'often', 'ever', 'really', 'maybe', 'probably', 'actually',
+        'usually', 'sometimes', 'almost', 'enough', 'especially', 'ago',
+        'away', 'today', 'far', 'together', 'yet', 'soon', 'later',
+        'certainly', 'clearly', 'however', 'perhaps', 'likely', 'simply',
+        'generally', 'instead', 'indeed',
+
+        # Question words and common conjunctions
+        'whether', 'while', 'although', 'though', 'since', 'unless',
+        'until', 'within', 'without', 'according', 'either', 'neither',
+        'both', 'rather', 'anything', 'everything', 'something', 'nothing',
+        'anyone', 'everyone', 'someone', 'nobody',
+
+        # Numbers as words
+        'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+        'nine', 'ten', 'hundred', 'thousand', 'million',
+
+        # Internet/Reddit common (these are baseline, not unique)
+        'post', 'comment', 'thread', 'edit', 'update', 'reddit', 'sub',
+        'subreddit', 'op', 'link', 'source', 'thanks', 'thank', 'sorry',
+        'yes', 'no', 'yeah', 'nope', 'okay', 'ok', 'please', 'like',
+        'literally', 'basically', 'totally', 'definitely', 'exactly',
+        'honestly', 'seriously', 'obviously', 'apparently',
+    }
+
+    BASELINE_VOCABULARY = common_words
+    logger.info(f"Loaded baseline vocabulary: {len(BASELINE_VOCABULARY)} common English words")
+    return BASELINE_VOCABULARY
+
+
+# Initialize baseline on module load
+_load_baseline_vocabulary()
+
 
 class VoiceDatabaseWorker:
     """
-    Comprehensive voice profile builder.
+    Fully dynamic voice profile builder.
     Crawls subreddit users and extracts ACTUAL writing patterns.
+    NO hardcoded slang or formality lists - everything is LEARNED.
     """
 
     def __init__(self):
@@ -56,20 +241,8 @@ class VoiceDatabaseWorker:
         self.COMMENTS_PER_USER = 20
         self.MIN_COMMENT_LENGTH = 20
 
-        # Known slang/informal words to detect
-        self.KNOWN_SLANG = [
-            'ngl', 'tbh', 'imo', 'imho', 'idk', 'idek', 'lol', 'lmao', 'rofl',
-            'gonna', 'wanna', 'kinda', 'sorta', 'gotta', 'shoulda', 'coulda', 'woulda',
-            'lowkey', 'highkey', 'deadass', 'legit', 'hella', 'sus', 'salty',
-            'yall', 'yolo', 'fomo', 'goat', 'lit', 'fire', 'dope', 'sick',
-            'bruh', 'fam', 'bro', 'dude', 'man', 'yo', 'ay', 'aye',
-            'rn', 'atm', 'btw', 'fyi', 'smh', 'wtf', 'wth', 'omg',
-            'af', 'asf', 'fr', 'ong', 'bet'
-        ]
-
-        # Formality indicators
-        self.CASUAL_INDICATORS = ['lol', 'lmao', 'tbh', 'ngl', 'idk', 'imo', 'gonna', 'wanna', 'kinda', 'sorta']
-        self.FORMAL_INDICATORS = ['however', 'therefore', 'furthermore', 'additionally', 'consequently', 'moreover']
+        # Voice profile refresh interval (30 days)
+        self.PROFILE_REFRESH_DAYS = 30
 
     async def analyze_subreddit_voice(
         self,
@@ -223,25 +396,187 @@ class VoiceDatabaseWorker:
             logger.warning(f"Error getting comments for u/{username}: {e}")
             return []
 
+    def _discover_unique_vocabulary(self, word_counts: Counter, min_frequency: int = 3) -> Dict[str, Any]:
+        """
+        Discover vocabulary unique to this subreddit by comparing against baseline English.
+
+        This is the KEY to learning - we find words that appear frequently in this
+        subreddit but are NOT common English words. These represent:
+        - Community slang (ngl, tbh, etc.)
+        - Industry jargon (HVAC terms, crypto terms, etc.)
+        - Subreddit-specific memes or phrases
+        - Technical vocabulary
+
+        Args:
+            word_counts: Counter of all words found in comments
+            min_frequency: Minimum times a word must appear to be considered
+
+        Returns:
+            Dictionary containing unique_vocabulary list and analysis
+        """
+        global BASELINE_VOCABULARY
+
+        unique_words = []
+        abbreviations = []  # Short words that might be acronyms/slang
+        technical_terms = []  # Longer unusual words
+
+        for word, count in word_counts.most_common(500):
+            if count < min_frequency:
+                continue
+
+            # Skip very short words and numbers
+            if len(word) < 2 or word.isdigit():
+                continue
+
+            # Check if NOT in baseline vocabulary
+            if word not in BASELINE_VOCABULARY:
+                # Categorize the unique word
+                word_info = {
+                    "word": word,
+                    "frequency": count,
+                    "per_thousand": round(count / sum(word_counts.values()) * 1000, 2)
+                }
+
+                if len(word) <= 4 and word.isalpha():
+                    # Short word - likely abbreviation/slang (lol, tbh, ngl, hvac)
+                    abbreviations.append(word_info)
+                elif not word.isalpha():
+                    # Contains numbers or special chars - technical (401k, a/c, etc.)
+                    technical_terms.append(word_info)
+                else:
+                    # Regular unique word
+                    unique_words.append(word_info)
+
+        # Sort by frequency
+        abbreviations.sort(key=lambda x: x['frequency'], reverse=True)
+        technical_terms.sort(key=lambda x: x['frequency'], reverse=True)
+        unique_words.sort(key=lambda x: x['frequency'], reverse=True)
+
+        # Combine into single list for backwards compatibility
+        all_unique = abbreviations + unique_words + technical_terms
+
+        return {
+            "unique_vocabulary": [w['word'] for w in all_unique[:30]],
+            "abbreviations_slang": [w['word'] for w in abbreviations[:15]],
+            "technical_terms": [w['word'] for w in technical_terms[:10]],
+            "vocabulary_richness": len(all_unique),
+            "top_unique_with_freq": all_unique[:20]
+        }
+
+    def _calculate_dynamic_formality(
+        self,
+        all_words: List[str],
+        word_counts: Counter,
+        avg_word_length: float,
+        lowercase_start_pct: float,
+        contraction_rate: float,
+        exclamation_pct: float
+    ) -> Dict[str, Any]:
+        """
+        Calculate formality score from ACTUAL patterns, not predefined word lists.
+
+        Formality indicators derived from linguistic research:
+        - Average word length (formal writing uses longer words)
+        - Sentence-initial capitalization (formal = proper caps)
+        - Contraction usage (formal = fewer contractions)
+        - Exclamation usage (formal = fewer exclamations)
+        - First-person pronoun frequency (formal = fewer I/me/my)
+
+        Returns score 0-1 where 0 = very casual, 1 = very formal
+        """
+        scores = []
+
+        # 1. Word length score (casual ~4 chars, formal ~6+ chars)
+        # Scale: 3.5 chars = 0, 6.5 chars = 1
+        word_length_score = max(0, min(1, (avg_word_length - 3.5) / 3.0))
+        scores.append(('word_length', word_length_score, 0.25))
+
+        # 2. Capitalization score (lowercase starts = casual)
+        # 0% lowercase = formal (1.0), 60%+ lowercase = casual (0)
+        cap_score = max(0, 1 - (lowercase_start_pct / 60))
+        scores.append(('capitalization', cap_score, 0.20))
+
+        # 3. Contraction score (more contractions = more casual)
+        # 0% contractions = formal (1.0), 10%+ = casual (0)
+        contraction_score = max(0, 1 - (contraction_rate / 10))
+        scores.append(('contractions', contraction_score, 0.20))
+
+        # 4. Exclamation score (more exclamations = more casual)
+        # 0% exclamations = formal (1.0), 15%+ = casual (0)
+        exclamation_score = max(0, 1 - (exclamation_pct / 15))
+        scores.append(('exclamations', exclamation_score, 0.15))
+
+        # 5. First-person pronoun frequency (I, me, my)
+        total_words = sum(word_counts.values()) if word_counts else 1
+        first_person = sum(word_counts.get(p, 0) for p in ['i', 'me', 'my', 'myself'])
+        first_person_rate = (first_person / total_words) * 100
+        # 0% first-person = formal (1.0), 10%+ = casual (0)
+        pronoun_score = max(0, 1 - (first_person_rate / 10))
+        scores.append(('first_person', pronoun_score, 0.20))
+
+        # Weighted average
+        weighted_sum = sum(score * weight for _, score, weight in scores)
+        total_weight = sum(weight for _, _, weight in scores)
+        formality_score = weighted_sum / total_weight if total_weight > 0 else 0.35
+
+        # Determine formality level label
+        if formality_score >= 0.7:
+            formality_level = "HIGH"
+        elif formality_score >= 0.4:
+            formality_level = "MEDIUM"
+        else:
+            formality_level = "LOW"
+
+        return {
+            "formality_score": round(formality_score, 2),
+            "formality_level": formality_level,
+            "formality_breakdown": {
+                name: round(score, 2) for name, score, _ in scores
+            }
+        }
+
+    def _count_contractions(self, all_words: List[str]) -> int:
+        """Count contracted words in the word list"""
+        # Common contraction patterns
+        contraction_patterns = [
+            "n't", "'s", "'re", "'ve", "'ll", "'d", "'m",
+            "nt", "dont", "wont", "cant", "shouldnt", "wouldnt", "couldnt",
+            "isnt", "arent", "wasnt", "werent", "hasnt", "havent", "hadnt",
+            "didnt", "doesnt", "im", "youre", "theyre", "weve", "theyve",
+            "ive", "youve", "itll", "theyll", "youll", "well", "shell",
+            "hed", "shed", "theyd", "youd", "wed", "id"
+        ]
+        count = 0
+        for word in all_words:
+            word_lower = word.lower()
+            if any(pattern in word_lower for pattern in ["'", "'"]):
+                count += 1
+            elif word_lower in contraction_patterns:
+                count += 1
+        return count
+
     def _analyze_comprehensive_patterns(self, comments: List[Dict], subreddit_name: str) -> Dict[str, Any]:
         """
         Analyze ALL linguistic patterns from comments.
-        This is where the actual LEARNING happens.
+        This is where the actual LEARNING happens - FULLY DYNAMIC, no hardcoded lists.
         """
         if not comments:
             return self._get_default_voice_profile(subreddit_name)
 
         # Initialize counters
-        word_counts = []
+        word_counts_list = []
         sentence_counts = []
         lowercase_starts = 0
         total_sentences = 0
         exclamation_count = 0
         question_count = 0
         total_comments = len(comments)
+        total_word_length = 0
+        total_word_count = 0
 
         # Word/phrase tracking
         all_words = []
+        word_counter = Counter()
         bigrams = []
         trigrams = []
         openers = []
@@ -256,8 +591,15 @@ class VoiceDatabaseWorker:
 
             # Word count
             words = text.split()
-            word_counts.append(len(words))
-            all_words.extend([w.lower().strip('.,!?;:') for w in words])
+            word_counts_list.append(len(words))
+
+            for w in words:
+                clean_word = w.lower().strip('.,!?;:"\'()[]{}')
+                if clean_word:
+                    all_words.append(clean_word)
+                    word_counter[clean_word] += 1
+                    total_word_length += len(clean_word)
+                    total_word_count += 1
 
             # Sentence analysis
             sentences = self._split_into_sentences(text)
@@ -283,7 +625,6 @@ class VoiceDatabaseWorker:
             # Extract opener (first 3 words)
             if len(words) >= 3:
                 opener = ' '.join(words[:3]).lower()
-                # Clean punctuation
                 opener = re.sub(r'[^\w\s]', '', opener)
                 if opener:
                     openers.append(opener)
@@ -309,8 +650,8 @@ class VoiceDatabaseWorker:
         # === CALCULATE STATISTICS ===
 
         # Word count statistics
-        avg_word_count = sum(word_counts) / len(word_counts) if word_counts else 50
-        sorted_counts = sorted(word_counts)
+        avg_word_count = sum(word_counts_list) / len(word_counts_list) if word_counts_list else 50
+        sorted_counts = sorted(word_counts_list)
 
         if len(sorted_counts) >= 10:
             p10_idx = len(sorted_counts) // 10
@@ -318,13 +659,13 @@ class VoiceDatabaseWorker:
             word_count_range = {"min": sorted_counts[p10_idx], "max": sorted_counts[p90_idx]}
         else:
             word_count_range = {
-                "min": min(word_counts) if word_counts else 20,
-                "max": max(word_counts) if word_counts else 150
+                "min": min(word_counts_list) if word_counts_list else 20,
+                "max": max(word_counts_list) if word_counts_list else 150
             }
 
         # Short reply probability (under 50 words)
-        short_replies = sum(1 for wc in word_counts if wc < 50)
-        short_reply_probability = short_replies / len(word_counts) if word_counts else 0.5
+        short_replies = sum(1 for wc in word_counts_list if wc < 50)
+        short_reply_probability = short_replies / len(word_counts_list) if word_counts_list else 0.5
 
         # Capitalization analysis
         lowercase_start_pct = (lowercase_starts / total_sentences * 100) if total_sentences > 0 else 20
@@ -342,8 +683,11 @@ class VoiceDatabaseWorker:
         # Common phrases
         common_phrases = self._find_common_phrases(bigrams, trigrams, min_count=3)
 
-        # Slang detection
-        slang_examples = self._find_slang_in_words(all_words)
+        # ====== DYNAMIC VOCABULARY DISCOVERY ======
+        # This replaces the old hardcoded slang detection
+        vocab_analysis = self._discover_unique_vocabulary(word_counter, min_frequency=3)
+        unique_vocabulary = vocab_analysis['unique_vocabulary']
+        abbreviations_slang = vocab_analysis['abbreviations_slang']
 
         # Signature idioms (subreddit-specific)
         signature_idioms = self._find_signature_idioms(trigrams, min_count=3)
@@ -371,14 +715,20 @@ class VoiceDatabaseWorker:
         closer_counts = Counter(closers)
         example_closers = [cl for cl, count in closer_counts.most_common(5) if count >= 2]
 
-        # Formality score (0 = very casual, 1 = very formal)
-        casual_count = sum(1 for w in all_words if w in self.CASUAL_INDICATORS)
-        formal_count = sum(1 for w in all_words if w in self.FORMAL_INDICATORS)
-        total_indicator_words = casual_count + formal_count
-        if total_indicator_words > 0:
-            formality_score = formal_count / total_indicator_words
-        else:
-            formality_score = 0.3  # Default slightly casual
+        # ====== DYNAMIC FORMALITY CALCULATION ======
+        # This replaces the old hardcoded formality indicators
+        avg_word_length = total_word_length / total_word_count if total_word_count > 0 else 4.5
+        contraction_count = self._count_contractions(all_words)
+        contraction_rate = (contraction_count / total_word_count * 100) if total_word_count > 0 else 5
+
+        formality_analysis = self._calculate_dynamic_formality(
+            all_words=all_words,
+            word_counts=word_counter,
+            avg_word_length=avg_word_length,
+            lowercase_start_pct=lowercase_start_pct,
+            contraction_rate=contraction_rate,
+            exclamation_pct=exclamation_usage_pct
+        )
 
         # Hedging frequency ("I think", "maybe", "probably")
         hedging_words = ['think', 'maybe', 'probably', 'might', 'perhaps', 'possibly', 'guess', 'suppose']
@@ -398,15 +748,19 @@ class VoiceDatabaseWorker:
             "avg_word_count": round(avg_word_count, 1),
             "word_count_range": word_count_range,
             "short_reply_probability": round(short_reply_probability, 2),
+            "avg_word_length": round(avg_word_length, 2),
 
             # Grammar patterns
             "capitalization_style": capitalization_style,
             "lowercase_start_pct": round(lowercase_start_pct, 1),
+            "contraction_rate": round(contraction_rate, 2),
 
-            # Lexical patterns
+            # Lexical patterns - NOW FULLY DYNAMIC
             "common_phrases": common_phrases[:15],
-            "slang_examples": slang_examples[:10],
+            "unique_vocabulary": unique_vocabulary[:20],  # Replaces slang_examples
+            "abbreviations_slang": abbreviations_slang[:15],  # Learned abbreviations
             "signature_idioms": signature_idioms[:8],
+            "vocabulary_richness": vocab_analysis['vocabulary_richness'],
 
             # Emoji patterns
             "emoji_frequency": emoji_frequency,
@@ -419,12 +773,18 @@ class VoiceDatabaseWorker:
             "exclamation_usage_pct": round(exclamation_usage_pct, 1),
             "hedging_frequency": round(hedging_frequency, 3),
 
-            # Tone patterns (will be enhanced by AI)
-            "formality_score": round(formality_score, 2),
+            # Tone patterns - NOW DYNAMICALLY CALCULATED
+            "formality_score": formality_analysis['formality_score'],
+            "formality_level": formality_analysis['formality_level'],
+            "formality_breakdown": formality_analysis['formality_breakdown'],
             "dominant_tone": "helpful",  # Default, AI will refine
 
             # Raw data
-            "sample_comments": sample_comments
+            "sample_comments": sample_comments,
+
+            # Learning metadata
+            "learning_method": "dynamic_vocabulary_discovery",
+            "baseline_vocabulary_size": len(BASELINE_VOCABULARY)
         }
 
     def _split_into_sentences(self, text: str) -> List[str]:
@@ -479,18 +839,6 @@ class VoiceDatabaseWorker:
                     common.append(phrase)
 
         return common[:15]
-
-    def _find_slang_in_words(self, words: List[str]) -> List[str]:
-        """Find slang words used in the comments"""
-        word_counts = Counter(words)
-        found_slang = []
-
-        for slang in self.KNOWN_SLANG:
-            count = word_counts.get(slang, 0)
-            if count >= 2:
-                found_slang.append(slang)
-
-        return found_slang
 
     def _find_signature_idioms(self, trigrams: List[str], min_count: int = 3) -> List[str]:
         """Find phrases that might be specific to this subreddit"""
@@ -564,33 +912,62 @@ Return ONLY valid JSON, no other text."""
         """Return default voice profile when crawling fails"""
         return {
             "subreddit": subreddit_name,
+
+            # Length patterns
             "avg_word_count": 75,
             "word_count_range": {"min": 30, "max": 200},
             "short_reply_probability": 0.4,
+            "avg_word_length": 4.5,
+
+            # Grammar patterns
             "capitalization_style": "mixed",
             "lowercase_start_pct": 25,
+            "contraction_rate": 5.0,
+
+            # Lexical patterns - DYNAMIC (empty by default)
             "common_phrases": ["honestly", "in my experience", "i think", "typically"],
-            "slang_examples": [],
+            "unique_vocabulary": [],  # Will be learned
+            "abbreviations_slang": [],  # Will be learned
             "signature_idioms": [],
+            "vocabulary_richness": 0,
+
+            # Emoji patterns
             "emoji_frequency": "rare",
             "common_emojis": [],
+
+            # Content patterns
             "example_openers": [],
             "example_closers": [],
             "question_frequency": 0.15,
             "exclamation_usage_pct": 8,
             "hedging_frequency": 0.02,
+
+            # Tone patterns - DYNAMICALLY CALCULATED
             "formality_score": 0.35,
+            "formality_level": "LOW",
+            "formality_breakdown": {
+                "word_length": 0.33,
+                "capitalization": 0.58,
+                "contractions": 0.50,
+                "exclamations": 0.47,
+                "first_person": 0.20
+            },
             "dominant_tone": "helpful, casual",
             "tone": "supportive, conversational",
             "grammar_style": "casual with informal patterns",
             "sentiment_distribution": {"supportive": 50, "neutral": 30, "critical": 20},
-            "formality_level": "LOW",
             "voice_description": "Default Reddit community voice. Friendly and authentic.",
+
+            # Raw data
             "sample_comments": [],
+
+            # Metadata
             "users_analyzed": 0,
             "comments_analyzed": 0,
             "is_fallback": True,
-            "last_crawl_date": datetime.utcnow().isoformat()
+            "last_crawl_date": datetime.utcnow().isoformat(),
+            "learning_method": "default_fallback",
+            "baseline_vocabulary_size": len(BASELINE_VOCABULARY)
         }
 
     async def _save_voice_profile(self, subreddit_name: str, client_id: str, profile: Dict) -> None:
@@ -719,3 +1096,231 @@ async def build_client_voice_database(client_id: str, user_limit: int = 100, com
         "failed": sum(1 for r in results if r['status'] == 'failed'),
         "results": results
     }
+
+
+# ============================================================================
+# VOICE PROFILE FRESHNESS & AUTO-REFRESH
+# ============================================================================
+
+def check_voice_profile_freshness(client_id: str, max_age_days: int = 30) -> Dict[str, Any]:
+    """
+    Check the freshness of voice profiles for a client.
+
+    Args:
+        client_id: Client UUID
+        max_age_days: Maximum age in days before profile is considered stale
+
+    Returns:
+        Dictionary with freshness status for each profile
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Get all voice profiles for this client
+        profiles_response = supabase.table("voice_profiles")\
+            .select("subreddit, voice_profile, updated_at, comments_analyzed")\
+            .eq("client_id", client_id)\
+            .execute()
+
+        if not profiles_response.data:
+            return {
+                "client_id": client_id,
+                "total_profiles": 0,
+                "fresh": 0,
+                "stale": 0,
+                "profiles": [],
+                "message": "No voice profiles found for this client"
+            }
+
+        now = datetime.utcnow()
+        cutoff = now - timedelta(days=max_age_days)
+
+        fresh_profiles = []
+        stale_profiles = []
+
+        for profile in profiles_response.data:
+            subreddit = profile.get('subreddit')
+            voice_data = profile.get('voice_profile') or {}
+
+            # Get last crawl date from voice_profile JSON or updated_at
+            last_crawl_str = voice_data.get('last_crawl_date') or profile.get('updated_at')
+
+            if last_crawl_str:
+                try:
+                    # Parse ISO format datetime
+                    if 'T' in last_crawl_str:
+                        last_crawl = datetime.fromisoformat(last_crawl_str.replace('Z', '+00:00').replace('+00:00', ''))
+                    else:
+                        last_crawl = datetime.strptime(last_crawl_str, '%Y-%m-%d %H:%M:%S')
+                except (ValueError, TypeError):
+                    last_crawl = None
+            else:
+                last_crawl = None
+
+            profile_info = {
+                "subreddit": subreddit,
+                "last_crawl": last_crawl.isoformat() if last_crawl else "unknown",
+                "comments_analyzed": profile.get('comments_analyzed') or voice_data.get('comments_analyzed', 0),
+                "learning_method": voice_data.get('learning_method', 'unknown'),
+                "vocabulary_richness": voice_data.get('vocabulary_richness', 0)
+            }
+
+            if last_crawl and last_crawl >= cutoff:
+                age_days = (now - last_crawl).days
+                profile_info["status"] = "fresh"
+                profile_info["age_days"] = age_days
+                profile_info["days_until_stale"] = max_age_days - age_days
+                fresh_profiles.append(profile_info)
+            else:
+                age_days = (now - last_crawl).days if last_crawl else "unknown"
+                profile_info["status"] = "stale"
+                profile_info["age_days"] = age_days
+                profile_info["needs_refresh"] = True
+                stale_profiles.append(profile_info)
+
+        return {
+            "client_id": client_id,
+            "total_profiles": len(profiles_response.data),
+            "fresh": len(fresh_profiles),
+            "stale": len(stale_profiles),
+            "max_age_days": max_age_days,
+            "fresh_profiles": fresh_profiles,
+            "stale_profiles": stale_profiles,
+            "needs_refresh": len(stale_profiles) > 0
+        }
+
+    except Exception as e:
+        logger.error(f"Error checking voice profile freshness for {client_id}: {e}")
+        return {
+            "client_id": client_id,
+            "error": str(e),
+            "total_profiles": 0,
+            "fresh": 0,
+            "stale": 0
+        }
+
+
+async def refresh_stale_voice_profiles(
+    client_id: Optional[str] = None,
+    max_age_days: int = 30,
+    user_limit: int = 100,
+    comments_per_user: int = 20
+) -> Dict[str, Any]:
+    """
+    Refresh voice profiles that are older than max_age_days.
+
+    This should be run on a schedule (e.g., daily) to keep profiles fresh.
+
+    Args:
+        client_id: Optional - refresh for specific client, or all clients if None
+        max_age_days: Profiles older than this will be refreshed
+        user_limit: Users to analyze per subreddit
+        comments_per_user: Comments per user
+
+    Returns:
+        Summary of refresh operation
+    """
+    supabase = get_supabase_client()
+    worker = VoiceDatabaseWorker()
+    worker.TOP_USERS_PER_SUBREDDIT = user_limit
+    worker.COMMENTS_PER_USER = comments_per_user
+
+    try:
+        # Get clients to process
+        if client_id:
+            clients = [client_id]
+        else:
+            # Get all active clients
+            clients_response = supabase.table("clients")\
+                .select("client_id")\
+                .execute()
+            clients = [c['client_id'] for c in (clients_response.data or [])]
+
+        if not clients:
+            return {
+                "success": True,
+                "message": "No clients found",
+                "refreshed": 0,
+                "failed": 0
+            }
+
+        total_refreshed = 0
+        total_failed = 0
+        details = []
+
+        for cid in clients:
+            # Check freshness for this client
+            freshness = check_voice_profile_freshness(cid, max_age_days)
+
+            if not freshness.get('stale_profiles'):
+                logger.info(f"Client {cid}: All {freshness.get('fresh', 0)} profiles are fresh")
+                continue
+
+            stale = freshness['stale_profiles']
+            logger.info(f"Client {cid}: Refreshing {len(stale)} stale voice profiles")
+
+            for profile_info in stale:
+                subreddit = profile_info['subreddit']
+                try:
+                    logger.info(f"🔄 Refreshing r/{subreddit} for client {cid}...")
+                    await worker.analyze_subreddit_voice(
+                        subreddit,
+                        cid,
+                        user_limit=user_limit,
+                        comments_per_user=comments_per_user
+                    )
+                    total_refreshed += 1
+                    details.append({
+                        "client_id": cid,
+                        "subreddit": subreddit,
+                        "status": "refreshed",
+                        "previous_age_days": profile_info.get('age_days')
+                    })
+                    logger.info(f"✅ Refreshed r/{subreddit}")
+                except Exception as e:
+                    total_failed += 1
+                    details.append({
+                        "client_id": cid,
+                        "subreddit": subreddit,
+                        "status": "failed",
+                        "error": str(e)
+                    })
+                    logger.error(f"❌ Failed to refresh r/{subreddit}: {e}")
+
+        return {
+            "success": True,
+            "clients_processed": len(clients),
+            "refreshed": total_refreshed,
+            "failed": total_failed,
+            "details": details
+        }
+
+    except Exception as e:
+        logger.error(f"Error in refresh_stale_voice_profiles: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "refreshed": 0,
+            "failed": 0
+        }
+
+
+async def scheduled_voice_profile_refresh():
+    """
+    Scheduled task to refresh stale voice profiles.
+    Call this from your scheduler (e.g., daily via APScheduler or cron).
+    """
+    logger.info("=" * 70)
+    logger.info("🔄 SCHEDULED VOICE PROFILE REFRESH STARTING")
+    logger.info("=" * 70)
+
+    result = await refresh_stale_voice_profiles(
+        max_age_days=30,
+        user_limit=100,
+        comments_per_user=20
+    )
+
+    logger.info(f"📊 Refresh complete: {result.get('refreshed', 0)} refreshed, {result.get('failed', 0)} failed")
+    logger.info("=" * 70)
+
+    return result

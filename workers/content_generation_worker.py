@@ -129,27 +129,37 @@ class ContentGenerationWorker:
         "avg_word_count": 75,
         "word_count_range": {"min": 30, "max": 200},
         "short_reply_probability": 0.4,
-        "avg_sentence_length": 12,
+        "avg_word_length": 4.5,
 
         # Grammar patterns
         "capitalization_style": "mixed",
         "lowercase_start_pct": 25,
+        "contraction_rate": 5.0,
 
-        # Lexical patterns
+        # Lexical patterns - DYNAMIC (learned from actual subreddit data)
         "common_phrases": ["honestly", "in my experience", "typically", "depends on"],
-        "slang_examples": [],
+        "unique_vocabulary": [],  # Learned words unique to this community
+        "abbreviations_slang": [],  # Learned abbreviations/slang
         "signature_idioms": [],
+        "vocabulary_richness": 0,
 
         # Emoji patterns
         "emoji_frequency": "rare",
         "common_emojis": [],
 
-        # Tone patterns
+        # Tone patterns - DYNAMICALLY CALCULATED
         "dominant_tone": "helpful, direct",
         "tone": "supportive, conversational",
         "grammar_style": "casual with informal patterns",
         "formality_score": 0.35,
         "formality_level": "LOW",
+        "formality_breakdown": {
+            "word_length": 0.33,
+            "capitalization": 0.58,
+            "contractions": 0.50,
+            "exclamations": 0.47,
+            "first_person": 0.20
+        },
 
         # Content patterns
         "example_openers": [],
@@ -163,7 +173,8 @@ class ContentGenerationWorker:
         "sample_comments": [],
         "users_analyzed": 0,
         "comments_analyzed": 0,
-        "is_fallback": True
+        "is_fallback": True,
+        "learning_method": "fallback"
     }
 
     def get_voice_profile(self, subreddit_name: str, client_id: str) -> Optional[Dict]:
@@ -296,34 +307,41 @@ MANDATORY RULES:
             formality = vp.get('formality_score') or 0.35
             formality_level = vp.get('formality_level') or 'LOW'
 
-            # Lexical patterns
+            # Lexical patterns - NOW DYNAMIC (learned from actual data)
             common_phrases = vp.get('common_phrases') or []
-            slang = vp.get('slang_examples') or []
+            unique_vocab = vp.get('unique_vocabulary') or []  # Learned unique words
+            abbreviations_slang = vp.get('abbreviations_slang') or []  # Learned abbreviations
             idioms = vp.get('signature_idioms') or []
+            vocab_richness = vp.get('vocabulary_richness') or 0
 
             # Emoji patterns
             emoji_freq = vp.get('emoji_frequency') or 'rare'
             common_emojis = vp.get('common_emojis') or []
 
-            # Tone patterns
+            # Tone patterns - DYNAMICALLY CALCULATED
             tone = vp.get('tone') or vp.get('dominant_tone') or 'helpful'
             grammar_style = vp.get('grammar_style') or 'conversational'
+            formality_breakdown = vp.get('formality_breakdown') or {}
 
             # Content patterns
             openers = vp.get('example_openers') or []
             closers = vp.get('example_closers') or []
             exclamation_pct = vp.get('exclamation_usage_pct') or 5
             question_freq = vp.get('question_frequency') or 0.1
+            contraction_rate = vp.get('contraction_rate') or 5.0
+            avg_word_length = vp.get('avg_word_length') or 4.5
 
             # Metadata
             comments_analyzed = vp.get('comments_analyzed') or 0
             users_analyzed = vp.get('users_analyzed') or 0
             sample_comments = vp.get('sample_comments') or []
             voice_description = vp.get('voice_description') or ''
+            learning_method = vp.get('learning_method') or 'unknown'
 
             # Format lists
             phrases_str = ', '.join(f'"{p}"' for p in common_phrases[:8]) if common_phrases else 'none identified'
-            slang_str = ', '.join(slang[:6]) if slang else 'minimal slang'
+            unique_vocab_str = ', '.join(unique_vocab[:10]) if unique_vocab else 'no unique vocabulary identified'
+            abbrev_str = ', '.join(abbreviations_slang[:8]) if abbreviations_slang else 'no abbreviations/slang found'
             idioms_str = ', '.join(f'"{i}"' for i in idioms[:5]) if idioms else 'none identified'
             openers_str = ', '.join(f'"{o}"' for o in openers[:5]) if openers else 'no specific patterns'
             emojis_str = ', '.join(common_emojis[:5]) if common_emojis else 'none'
@@ -333,29 +351,37 @@ MANDATORY RULES:
 SUBREDDIT VOICE PROFILE (LEARNED FROM r/{subreddit} USERS)
 ══════════════════════════════════════════════════════════════════════════════
 
-These patterns were extracted from analyzing {comments_analyzed} real comments
+These patterns were DYNAMICALLY LEARNED from analyzing {comments_analyzed} real comments
 by {users_analyzed} users in r/{subreddit}. MATCH THEM.
+Learning method: {learning_method} | Vocabulary richness: {vocab_richness} unique words
 
-LENGTH:
+LENGTH & STYLE:
 - Average reply length: {avg_words} words
 - Typical range: {word_range.get('min', 30)} to {word_range.get('max', 200)} words
 - Short replies (<50 words): {round(short_reply_prob * 100)}% of posts
+- Average word length: {avg_word_length} characters
 - Keep your response within this range unless the topic requires more detail
 
 GRAMMAR & CAPITALIZATION:
 - Style: {cap_style}
 - {lowercase_pct}% of sentences start lowercase (match this roughly)
+- Contraction usage: {contraction_rate}% of words
 - {"Use sentence fragments freely - users here don't always write complete sentences" if formality < 0.3 else "Write in complete sentences"}
 
-FORMALITY: {formality} (0=very casual, 1=very formal)
+FORMALITY: {formality} / {formality_level} (0=very casual, 1=very formal)
 - {"Very casual - contractions, relaxed grammar, conversational" if formality < 0.3 else "Moderately formal - clear but not stiff" if formality < 0.6 else "More formal - proper grammar, professional tone"}
+{f"- Breakdown: word_length={formality_breakdown.get('word_length', 'N/A')}, caps={formality_breakdown.get('capitalization', 'N/A')}, contractions={formality_breakdown.get('contractions', 'N/A')}" if formality_breakdown else ""}
 
 COMMON PHRASES IN THIS COMMUNITY:
 {phrases_str}
 → Use 1-2 of these naturally if they fit
 
-SLANG USED HERE:
-{slang_str}
+UNIQUE VOCABULARY (learned from this community):
+{unique_vocab_str}
+→ These words are more common here than in general English - use naturally if appropriate
+
+ABBREVIATIONS/SLANG (learned):
+{abbrev_str}
 → Use if natural, don't force it
 
 SUBREDDIT-SPECIFIC IDIOMS:

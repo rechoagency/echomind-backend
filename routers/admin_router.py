@@ -2128,3 +2128,89 @@ async def build_all_voice_profiles(client_id: str, background_tasks: BackgroundT
     except Exception as e:
         logger.error(f"Error building voice profiles: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/voice-profile-freshness/{client_id}")
+async def get_voice_profile_freshness(client_id: str, max_age_days: int = 30):
+    """
+    Check the freshness of voice profiles for a client.
+
+    Voice profiles should be refreshed every 30 days to stay current with
+    evolving community language patterns.
+
+    Args:
+        client_id: Client UUID
+        max_age_days: Maximum age in days before profile is considered stale (default 30)
+
+    Returns:
+        Freshness status for each profile, including which need refresh
+    """
+    try:
+        from workers.voice_database_worker import check_voice_profile_freshness
+
+        result = check_voice_profile_freshness(client_id, max_age_days)
+
+        return {
+            "success": True,
+            **result
+        }
+
+    except Exception as e:
+        logger.error(f"Error checking voice profile freshness: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/trigger-voice-refresh")
+async def trigger_voice_profile_refresh(
+    background_tasks: BackgroundTasks,
+    client_id: str = None,
+    max_age_days: int = 30,
+    user_limit: int = 100,
+    comments_per_user: int = 20
+):
+    """
+    Trigger refresh of stale voice profiles.
+
+    This endpoint refreshes all voice profiles older than max_age_days.
+    Can be called manually or set up as a scheduled job.
+
+    Args:
+        client_id: Optional - refresh for specific client, or all clients if None
+        max_age_days: Profiles older than this will be refreshed (default 30)
+        user_limit: Users to analyze per subreddit (default 100)
+        comments_per_user: Comments per user (default 20)
+
+    Returns immediately, refresh runs in background.
+    """
+    try:
+        logger.info(f"🔄 Voice profile refresh triggered (client: {client_id or 'ALL'}, max_age: {max_age_days} days)")
+
+        async def run_refresh():
+            try:
+                from workers.voice_database_worker import refresh_stale_voice_profiles
+
+                result = await refresh_stale_voice_profiles(
+                    client_id=client_id,
+                    max_age_days=max_age_days,
+                    user_limit=user_limit,
+                    comments_per_user=comments_per_user
+                )
+                logger.info(f"✅ Voice refresh complete: {result.get('refreshed', 0)} refreshed, {result.get('failed', 0)} failed")
+            except Exception as e:
+                logger.error(f"❌ Voice refresh failed: {e}")
+
+        background_tasks.add_task(run_refresh)
+
+        return {
+            "success": True,
+            "message": "Voice profile refresh started in background",
+            "client_id": client_id or "ALL",
+            "max_age_days": max_age_days,
+            "user_limit": user_limit,
+            "comments_per_user": comments_per_user,
+            "note": "Check logs or call GET /voice-profile-freshness/{client_id} to verify"
+        }
+
+    except Exception as e:
+        logger.error(f"Error triggering voice refresh: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
