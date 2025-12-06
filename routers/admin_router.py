@@ -1173,37 +1173,68 @@ async def create_voice_profile_manual(request: dict):
 
         subreddit = subreddit.replace("r/", "").strip().lower()
 
-        # Create voice profile data using individual columns
-        # (content_generation_worker expects these columns directly, not nested in JSONB)
-        data = {
-            "client_id": client_id,
-            "subreddit": subreddit,
+        # Default voice profile values
+        profile_values = {
             "dominant_tone": "helpful",
             "formality_score": 0.3,
             "lowercase_start_pct": 25,
-            "exclamation_usage_pct": 12,
-            "question_frequency": 0.18,
-            "avg_sentence_length": 14.5,
-            "common_phrases": ["honestly", "in my experience", "hope this helps", "just my two cents", "FWIW"],
-            "signature_idioms": ["DIY", "pro tip", "contractor", "code"],
-            "sample_size": 100,
-            "created_at": datetime.utcnow().isoformat()
+            "exclamation_usage_pct": 12
         }
 
-        supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+        # Try multiple column combinations until one works
+        column_attempts = [
+            # Attempt 1: Most complete
+            {
+                "client_id": client_id,
+                "subreddit": subreddit,
+                "dominant_tone": profile_values["dominant_tone"],
+                "formality_score": profile_values["formality_score"],
+                "lowercase_start_pct": profile_values["lowercase_start_pct"],
+                "exclamation_usage_pct": profile_values["exclamation_usage_pct"],
+                "created_at": datetime.utcnow().isoformat()
+            },
+            # Attempt 2: Without numeric columns
+            {
+                "client_id": client_id,
+                "subreddit": subreddit,
+                "dominant_tone": profile_values["dominant_tone"],
+                "created_at": datetime.utcnow().isoformat()
+            },
+            # Attempt 3: Just the required columns
+            {
+                "client_id": client_id,
+                "subreddit": subreddit,
+                "created_at": datetime.utcnow().isoformat()
+            }
+        ]
 
-        logger.info(f"✅ Created manual voice profile for r/{subreddit}")
+        inserted_data = None
+        last_error = None
+
+        for i, data in enumerate(column_attempts):
+            try:
+                supabase.table("voice_profiles").upsert(data, on_conflict="client_id,subreddit").execute()
+                inserted_data = data
+                logger.info(f"✅ Created voice profile with attempt {i+1} for r/{subreddit}")
+                break
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Voice profile attempt {i+1} failed: {e}")
+                continue
+
+        if not inserted_data:
+            return {
+                "success": False,
+                "error": f"All column combinations failed. Last error: {last_error}"
+            }
 
         return {
             "success": True,
             "client_id": client_id,
             "subreddit": subreddit,
             "profile_created": True,
-            "profile_summary": {
-                "dominant_tone": data["dominant_tone"],
-                "formality_score": data["formality_score"],
-                "common_phrases": data["common_phrases"]
-            }
+            "columns_used": list(inserted_data.keys()),
+            "profile_values": profile_values
         }
 
     except Exception as e:
