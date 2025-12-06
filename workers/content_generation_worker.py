@@ -229,19 +229,63 @@ class ContentGenerationWorker:
 
 """
         
-        # Add voice profile guidelines
-        if voice_profile:
-            # Use defaults if values are None (database may return None for empty columns)
-            formality = voice_profile.get("formality_score") or 0.3  # Default casual
-            lowercase_pct = voice_profile.get("lowercase_start_pct") or 25
-            exclamation_pct = voice_profile.get("exclamation_usage_pct") or 8
-            dominant_tone = voice_profile.get("dominant_tone") or "supportive, helpful"
+        # GLOBAL AUTHENTICITY RULES (always applied)
+        prompt += f"""
+**AUTHENTICITY RULES (non-negotiable):**
+- You represent {brand_name} - NEVER pretend to be a random customer
+- NEVER say "I bought this", "I used this", "I had this problem too"
+- Use "you/your" when giving advice: "when you install...", "you'll find..."
+- NO corporate phrases: "Great question!", "Hope this helps!", "Thanks for asking!"
+- Be honest about limitations - builds credibility
+- Sound like a knowledgeable community member, not a marketer
 
-            prompt += f"""**Community Voice Style (r/{subreddit}):**
-- Formality: {"Casual and conversational" if formality < 0.4 else "Moderately formal" if formality < 0.7 else "Professional"}
-- Tone: {dominant_tone}
-- Writing style: {"Often starts lowercase, relaxed" if lowercase_pct > 60 else "Standard capitalization"}
-- Enthusiasm: {"High energy, uses exclamation marks" if exclamation_pct > 10 else "Moderate, occasional excitement" if exclamation_pct > 5 else "Calm and measured"}
+"""
+
+        # Add COMPLETE voice profile from learned subreddit patterns
+        if voice_profile:
+            # Extract all learned patterns (with fallbacks for None values)
+            # Voice profile may be stored as JSONB in 'voice_profile' column or as individual columns
+            vp = voice_profile.get('voice_profile', voice_profile)  # Handle both storage formats
+
+            avg_sentence_len = vp.get("avg_sentence_length") or 12
+            avg_word_len = vp.get("avg_word_length") or 5
+            common_phrases = vp.get("common_phrases") or []
+            signature_idioms = vp.get("signature_idioms") or []
+            typo_freq = vp.get("typo_frequency") or 0.02
+            uses_emojis = vp.get("uses_emojis") or "occasional"
+            exclamation_freq = vp.get("exclamation_frequency") or 0.1
+            question_freq = vp.get("question_frequency") or 0.1
+            tone = vp.get("tone") or vp.get("dominant_tone") or "supportive"
+            grammar_style = vp.get("grammar_style") or "conversational"
+            formality_level = vp.get("formality_level") or "LOW"
+            voice_description = vp.get("voice_description") or ""
+            sample_size = vp.get("sample_size") or 0
+
+            # Format lists for prompt
+            phrases_str = ", ".join(f'"{p}"' for p in common_phrases[:8]) if common_phrases else "none learned"
+            idioms_str = ", ".join(f'"{i}"' for i in signature_idioms[:6]) if signature_idioms else "none learned"
+
+            prompt += f"""**VOICE PATTERNS (learned from {sample_size} real posts in r/{subreddit}):**
+
+Writing Metrics:
+- Average sentence length: {avg_sentence_len} words (match this closely)
+- Typo frequency: {round(typo_freq * 100, 1)}% of words (include natural typos if > 2%)
+
+Tone & Style:
+- Emotional tone: {tone}
+- Grammar style: {grammar_style}
+- Formality: {formality_level}
+- Emoji usage: {uses_emojis}
+- Exclamation frequency: {round(exclamation_freq * 100)}% of sentences
+- Question frequency: {round(question_freq * 100)}% of sentences
+
+Authentic Phrases (use 1-2 naturally):
+- Common phrases: {phrases_str}
+- Community idioms: {idioms_str}
+
+{f'Voice summary: {voice_description}' if voice_description else ''}
+
+IMPORTANT: These patterns were extracted from analyzing REAL users in r/{subreddit}. Match their writing style exactly.
 
 """
         
