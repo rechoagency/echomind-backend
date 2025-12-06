@@ -547,6 +547,7 @@ async def run_worker_pipeline(background_tasks: BackgroundTasks, request: dict):
 class TestContentRequest(BaseModel):
     client_id: str = None
     count: int = 2
+    opportunity_id: str = None  # Optional: Test specific opportunity
 
 
 @router.post("/test-content-generation")
@@ -593,18 +594,33 @@ async def test_content_generation_sync(request: TestContentRequest = None):
 
         logger.info(f"🧪 Calling process_all_opportunities for client {client_id}")
 
-        # First, let's check how many opportunities exist using worker's supabase
-        opps_check = worker.supabase.table("opportunities").select("opportunity_id, thread_title").eq("client_id", client_id).order("date_found", desc=True).limit(5).execute()
-        opps_count = len(opps_check.data) if opps_check.data else 0
-        sample_opp = opps_check.data[0] if opps_check.data else None
+        # Check if specific opportunity_id was provided
+        specific_opp_id = request.opportunity_id if request and request.opportunity_id else None
 
-        # Also check what the worker's query returns
-        worker_query = worker.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found").eq("client_id", client_id).order("date_found", desc=True).limit(10).execute()
-        worker_query_count = len(worker_query.data) if worker_query.data else 0
+        if specific_opp_id:
+            # Get specific opportunity
+            logger.info(f"🧪 Testing specific opportunity: {specific_opp_id}")
+            worker_query = worker.supabase.table("opportunities")\
+                .select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found")\
+                .eq("opportunity_id", specific_opp_id)\
+                .execute()
+            test_opps = worker_query.data if worker_query.data else []
+            opps_count = len(test_opps)
+            sample_opp = test_opps[0] if test_opps else None
+            worker_query_count = len(test_opps)
+        else:
+            # First, let's check how many opportunities exist using worker's supabase
+            opps_check = worker.supabase.table("opportunities").select("opportunity_id, thread_title").eq("client_id", client_id).order("date_found", desc=True).limit(5).execute()
+            opps_count = len(opps_check.data) if opps_check.data else 0
+            sample_opp = opps_check.data[0] if opps_check.data else None
 
-        # Directly call generate_content_for_client with limited opportunities to avoid timeout
-        # Take first 'count' opportunities for quick test
-        test_opps = worker_query.data[:count] if worker_query.data else []
+            # Also check what the worker's query returns
+            worker_query = worker.supabase.table("opportunities").select("opportunity_id, client_id, thread_title, original_post_text, subreddit, thread_url, date_found").eq("client_id", client_id).order("date_found", desc=True).limit(10).execute()
+            worker_query_count = len(worker_query.data) if worker_query.data else 0
+
+            # Directly call generate_content_for_client with limited opportunities to avoid timeout
+            # Take first 'count' opportunities for quick test
+            test_opps = worker_query.data[:count] if worker_query.data else []
 
         if test_opps:
             try:
@@ -1276,6 +1292,80 @@ async def create_voice_profile_manual(request: dict):
             "success": False,
             "error": str(e)
         }
+
+
+@router.get("/search-opportunities/{client_id}")
+async def search_opportunities(client_id: str, keywords: str = None, limit: int = 20):
+    """
+    Search opportunities for a client by keywords.
+
+    Use this to find product-relevant opportunities for testing.
+
+    Args:
+        client_id: Client UUID
+        keywords: Comma-separated keywords to search (e.g., "fireplace,tv lift,heating")
+        limit: Max results (default 20)
+
+    Example:
+        GET /api/admin/search-opportunities/999ac53f-...?keywords=fireplace,electric,tv&limit=10
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get all opportunities for client
+        query = supabase.table("opportunities")\
+            .select("opportunity_id, thread_title, subreddit, opportunity_score, original_post_text, date_found")\
+            .eq("client_id", client_id)\
+            .order("date_found", desc=True)\
+            .limit(500)  # Get more to filter
+
+        result = query.execute()
+
+        if not result.data:
+            return {"success": True, "count": 0, "opportunities": [], "message": "No opportunities found"}
+
+        opportunities = result.data
+
+        # Filter by keywords if provided
+        if keywords:
+            keyword_list = [k.strip().lower() for k in keywords.split(",")]
+            filtered = []
+            for opp in opportunities:
+                title = (opp.get("thread_title") or "").lower()
+                content = (opp.get("original_post_text") or "").lower()
+                combined = f"{title} {content}"
+
+                for kw in keyword_list:
+                    if kw in combined:
+                        opp["matched_keyword"] = kw
+                        filtered.append(opp)
+                        break
+
+            opportunities = filtered
+
+        # Limit results
+        opportunities = opportunities[:limit]
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "keywords_searched": keywords,
+            "count": len(opportunities),
+            "opportunities": [
+                {
+                    "opportunity_id": o.get("opportunity_id"),
+                    "thread_title": o.get("thread_title"),
+                    "subreddit": o.get("subreddit"),
+                    "score": o.get("opportunity_score"),
+                    "matched_keyword": o.get("matched_keyword"),
+                    "date_found": o.get("date_found")
+                } for o in opportunities
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"Search opportunities failed: {e}")
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/reprocess-embeddings/{client_id}")
