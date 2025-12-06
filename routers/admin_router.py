@@ -607,11 +607,19 @@ async def test_content_generation_sync(request: TestContentRequest = None):
         test_opps = worker_query.data[:count] if worker_query.data else []
 
         if test_opps:
-            result = worker.generate_content_for_client(
-                client_id=client_id,
-                opportunities=test_opps,
-                delivery_batch=f"TEST-{datetime.now().strftime('%Y-%m-%d')}"
-            )
+            try:
+                result = worker.generate_content_for_client(
+                    client_id=client_id,
+                    opportunities=test_opps,
+                    delivery_batch=f"TEST-{datetime.now().strftime('%Y-%m-%d')}"
+                )
+            except Exception as gen_error:
+                gen_tb = traceback.format_exc()
+                result = {
+                    "success": False,
+                    "error": f"Generation failed: {str(gen_error)}",
+                    "traceback": gen_tb
+                }
         else:
             result = {"success": False, "error": "No opportunities found"}
 
@@ -629,7 +637,14 @@ async def test_content_generation_sync(request: TestContentRequest = None):
             "opportunities_check": {
                 "count": opps_count,
                 "sample": sample_opp,
-                "worker_query_count": worker_query_count
+                "worker_query_count": worker_query_count,
+                "test_opportunities": [
+                    {
+                        "id": o.get("opportunity_id"),
+                        "subreddit": o.get("subreddit"),
+                        "title": o.get("thread_title", "")[:80]
+                    } for o in test_opps
+                ]
             },
             "result": result,
             "content_in_database": {
