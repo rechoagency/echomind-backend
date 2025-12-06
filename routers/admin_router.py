@@ -1173,32 +1173,20 @@ async def create_voice_profile_manual(request: dict):
 
         subreddit = subreddit.replace("r/", "").strip().lower()
 
-        # Create a realistic voice profile without crawling
-        voice_profile = {
-            "subreddit": subreddit,
-            "sample_size": 100,
-            "avg_sentence_length": 14.5,
-            "avg_word_length": 4.8,
-            "common_phrases": ["honestly", "in my experience", "hope this helps", "just my two cents", "FWIW"],
-            "typo_frequency": 0.02,
-            "uses_emojis": "occasional",
-            "exclamation_frequency": 0.12,
-            "question_frequency": 0.18,
-            "tone": "helpful, casual, knowledgeable",
-            "grammar_style": "informal but clear, conversational",
-            "sentiment_distribution": {"helpful": 45, "neutral": 30, "frustrated": 15, "enthusiastic": 10},
-            "signature_idioms": ["DIY", "pro tip", "home depot", "contractor", "code"],
-            "formality_level": "LOW",
-            "voice_description": f"r/{subreddit} community members are helpful DIY enthusiasts who share practical advice. Writing is casual but knowledgeable.",
-            "analyzed_at": datetime.utcnow().isoformat(),
-            "source": "manual_creation"
-        }
-
-        # Insert into voice_profiles
+        # Create voice profile data using individual columns
+        # (content_generation_worker expects these columns directly, not nested in JSONB)
         data = {
             "client_id": client_id,
             "subreddit": subreddit,
-            "voice_profile": voice_profile,
+            "dominant_tone": "helpful",
+            "formality_score": 0.3,
+            "lowercase_start_pct": 25,
+            "exclamation_usage_pct": 12,
+            "question_frequency": 0.18,
+            "avg_sentence_length": 14.5,
+            "common_phrases": ["honestly", "in my experience", "hope this helps", "just my two cents", "FWIW"],
+            "signature_idioms": ["DIY", "pro tip", "contractor", "code"],
+            "sample_size": 100,
             "created_at": datetime.utcnow().isoformat()
         }
 
@@ -1212,9 +1200,9 @@ async def create_voice_profile_manual(request: dict):
             "subreddit": subreddit,
             "profile_created": True,
             "profile_summary": {
-                "tone": voice_profile["tone"],
-                "formality_level": voice_profile["formality_level"],
-                "common_phrases": voice_profile["common_phrases"]
+                "dominant_tone": data["dominant_tone"],
+                "formality_score": data["formality_score"],
+                "common_phrases": data["common_phrases"]
             }
         }
 
