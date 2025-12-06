@@ -1183,11 +1183,15 @@ async def create_voice_profile_manual(request: dict):
             "exclamation_usage_pct": 12
         }
 
+        # Use a synthetic redditor_username for subreddit-wide voice (table requires it)
+        synthetic_username = f"__subreddit_voice_{subreddit}__"
+
         # Try multiple column combinations until one works
         column_attempts = [
             # Attempt 1: Most complete
             {
                 "client_id": client_id,
+                "redditor_username": synthetic_username,
                 "subreddit": subreddit,
                 "dominant_tone": profile_values["dominant_tone"],
                 "formality_score": profile_values["formality_score"],
@@ -1198,6 +1202,7 @@ async def create_voice_profile_manual(request: dict):
             # Attempt 2: Without numeric columns
             {
                 "client_id": client_id,
+                "redditor_username": synthetic_username,
                 "subreddit": subreddit,
                 "dominant_tone": profile_values["dominant_tone"],
                 "created_at": datetime.utcnow().isoformat()
@@ -1205,6 +1210,7 @@ async def create_voice_profile_manual(request: dict):
             # Attempt 3: Just the required columns
             {
                 "client_id": client_id,
+                "redditor_username": synthetic_username,
                 "subreddit": subreddit,
                 "created_at": datetime.utcnow().isoformat()
             }
