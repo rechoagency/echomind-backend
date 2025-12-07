@@ -2217,3 +2217,247 @@ async def trigger_voice_profile_refresh(
     except Exception as e:
         logger.error(f"Error triggering voice refresh: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate-content-excel/{client_id}")
+async def generate_content_excel(
+    client_id: str,
+    limit: int = 25
+):
+    """
+    Generate content for opportunities and export directly to Excel.
+
+    This endpoint:
+    1. Gets top opportunities for the client
+    2. Generates content using anti-AI voice matching
+    3. Exports directly to Excel with 30 columns (A through AD)
+
+    Args:
+        client_id: Client UUID
+        limit: Number of opportunities to process (default 25, max 50)
+
+    Returns:
+        Excel file download with voice-matched content
+    """
+    import io
+    import json as json_lib
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from fastapi.responses import StreamingResponse
+
+    try:
+        supabase = get_supabase()
+        limit = min(limit, 50)  # Cap at 50
+
+        logger.info(f"📊 Generating content Excel for client {client_id} (limit: {limit})")
+
+        # Get client info
+        client_response = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client_response.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        client = client_response.data[0]
+        company_name = client.get("company_name", "Client")
+
+        # Get opportunities
+        opps_response = supabase.table("opportunities")\
+            .select("*")\
+            .eq("client_id", client_id)\
+            .order("date_found", desc=True)\
+            .limit(limit)\
+            .execute()
+
+        if not opps_response.data:
+            raise HTTPException(status_code=404, detail="No opportunities found for this client")
+
+        opportunities = opps_response.data
+        logger.info(f"📊 Found {len(opportunities)} opportunities")
+
+        # Generate content using ContentGenerationWorker
+        from workers.content_generation_worker import ContentGenerationWorker
+        worker = ContentGenerationWorker()
+
+        result = worker.generate_content_for_client(
+            client_id=client_id,
+            opportunities=opportunities,
+            delivery_batch=f"EXCEL-{datetime.now().strftime('%Y-%m-%d')}"
+        )
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=f"Content generation failed: {result.get('error')}")
+
+        content_items = result.get("content", [])
+        logger.info(f"📊 Generated {len(content_items)} content items")
+
+        # Create Excel workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Content Queue"
+
+        # Styling
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        border = Border(
+            left=Side(style='thin', color='D3D3D3'),
+            right=Side(style='thin', color='D3D3D3'),
+            top=Side(style='thin', color='D3D3D3'),
+            bottom=Side(style='thin', color='D3D3D3')
+        )
+
+        # 30 Column Headers (A through AD)
+        headers = [
+            "Opportunity ID",           # A
+            "Subreddit",                # B
+            "Thread URL",               # C
+            "Thread Title",             # D
+            "Original Post",            # E
+            "Author Username",          # F
+            "Date Posted",              # G
+            "Date Found",               # H
+            "Matched Keywords",         # I
+            "Urgency",                  # J
+            "Content Type",             # K
+            "Generated Reply",          # L (THE CONTENT)
+            "Word Count",               # M
+            "Voice Formality Score",    # N
+            "Voice Tone",               # O
+            "Voice Similarity Proof",   # P
+            "Typos Injected",           # Q
+            "AI Violations Detected",   # R
+            "Regeneration Attempts",    # S
+            "Brand Mentioned",          # T
+            "Product Mentioned",        # U
+            "Product Similarity",       # V
+            "Knowledge Base Used",      # W
+            "Knowledge Excerpts",       # X
+            "Assigned Profile",         # Y
+            "Profile Karma",            # Z
+            "Combined Score",           # AA
+            "Content Status",           # AB
+            "Notes",                    # AC
+            "Posting Account",          # AD
+        ]
+
+        # Write headers
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        # Column widths
+        column_widths = [
+            15, 14, 50, 50, 60, 16, 18, 18, 25, 12, 14, 120, 10, 14, 20, 50,
+            10, 14, 14, 12, 12, 12, 14, 50, 18, 10, 12, 14, 40, 18
+        ]
+        for idx, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
+
+        # Write content rows
+        for row_idx, item in enumerate(content_items, 2):
+            # Parse matched keywords
+            matched_keywords = item.get('matched_keywords', '')
+            if isinstance(matched_keywords, list):
+                matched_keywords = ', '.join(matched_keywords)
+            elif matched_keywords and matched_keywords.startswith('['):
+                try:
+                    matched_keywords = ', '.join(json_lib.loads(matched_keywords))
+                except:
+                    pass
+
+            # Determine urgency
+            formality = item.get('formality_score', 0.5)
+            urgency = "🔴 URGENT" if formality > 0.7 else "🟡 HIGH" if formality > 0.4 else "🟢 MEDIUM"
+
+            # Build notes
+            notes_parts = []
+            if item.get('ai_violations_detected', 0) == 0:
+                notes_parts.append("AI-Clean")
+            else:
+                notes_parts.append(f"AI-Flagged ({item.get('ai_violations_detected')})")
+            if item.get('typos_injected', 0) > 0:
+                notes_parts.append(f"{item.get('typos_injected')} typo(s)")
+            if item.get('knowledge_insights_used', 0) > 0:
+                notes_parts.append(f"KB: {item.get('knowledge_insights_used')}")
+            notes = " | ".join(notes_parts)
+
+            # Row data (30 columns)
+            row_data = [
+                str(item.get('opportunity_id', ''))[:15],           # A
+                item.get('subreddit', ''),                          # B
+                item.get('thread_url', ''),                         # C
+                item.get('thread_title', ''),                       # D
+                (item.get('original_post_text', '') or '')[:500],   # E
+                item.get('author_username', ''),                    # F
+                item.get('date_posted', ''),                        # G
+                item.get('date_found', ''),                         # H
+                matched_keywords,                                    # I
+                urgency,                                             # J
+                item.get('type', 'REPLY').upper(),                  # K
+                item.get('text', ''),                               # L (THE CONTENT)
+                item.get('actual_word_count', 0),                   # M
+                round(item.get('formality_score', 0.5), 2),         # N
+                item.get('tone', 'conversational'),                 # O
+                item.get('voice_similarity_proof', ''),             # P
+                item.get('typos_injected', 0),                      # Q
+                item.get('ai_violations_detected', 0),              # R
+                item.get('regeneration_attempts', 1),               # S
+                'Yes' if item.get('brand_mentioned') else 'No',     # T
+                'Yes' if item.get('product_mentioned') else 'No',   # U
+                round(item.get('product_similarity', 0), 2),        # V
+                item.get('knowledge_insights_used', 0),             # W
+                '; '.join(item.get('knowledge_excerpts', []))[:200], # X
+                item.get('assigned_profile', ''),                   # Y
+                item.get('profile_karma', 0),                       # Z
+                round(item.get('combined_score', 0), 2),            # AA
+                "Ready to Post",                                    # AB
+                notes,                                              # AC
+                item.get('assigned_profile', ''),                   # AD
+            ]
+
+            # Write row
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.value = value
+                cell.border = border
+
+                # Wrap text for content columns
+                if col_idx in [5, 12, 16, 24, 29]:
+                    cell.alignment = Alignment(wrap_text=True, vertical='top')
+                elif col_idx == 10:  # Urgency colors
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    if "🔴" in str(value):
+                        cell.font = Font(color="FF0000", bold=True)
+                    elif "🟡" in str(value):
+                        cell.font = Font(color="FFA500", bold=True)
+                    elif "🟢" in str(value):
+                        cell.font = Font(color="008000", bold=True)
+                else:
+                    cell.alignment = Alignment(vertical='center')
+
+        # Save to BytesIO
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        # Generate filename
+        today = datetime.now().strftime("%Y-%m-%d")
+        filename = f"{company_name.replace(' ', '_')}_Content_Queue_{today}.xlsx"
+
+        logger.info(f"✅ Generated Excel: {filename} with {len(content_items)} rows")
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"❌ Excel generation failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
