@@ -2579,3 +2579,37 @@ async def generate_content_excel(
         logger.error(f"❌ Excel generation failed: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/debug-scored-opportunities/{client_id}")
+async def debug_scored_opportunities(client_id: str, limit: int = 5):
+    """Debug endpoint to check if opportunity scores are being saved"""
+    supabase = get_supabase_client()
+
+    # Get opportunities with scoring columns
+    response = supabase.table("opportunities")\
+        .select("opportunity_id, commercial_intent_score, relevance_score, engagement_score, composite_score, priority_tier, updated_at")\
+        .eq("client_id", client_id)\
+        .not_.is_("composite_score", "null")\
+        .order("composite_score", desc=True)\
+        .limit(limit)\
+        .execute()
+
+    scored_count = supabase.table("opportunities")\
+        .select("opportunity_id", count="exact")\
+        .eq("client_id", client_id)\
+        .not_.is_("composite_score", "null")\
+        .execute()
+
+    unscored_count = supabase.table("opportunities")\
+        .select("opportunity_id", count="exact")\
+        .eq("client_id", client_id)\
+        .is_("composite_score", "null")\
+        .execute()
+
+    return {
+        "client_id": client_id,
+        "scored_opportunities": scored_count.count if hasattr(scored_count, 'count') else len(scored_count.data or []),
+        "unscored_opportunities": unscored_count.count if hasattr(unscored_count, 'count') else len(unscored_count.data or []),
+        "top_scored": response.data
+    }
