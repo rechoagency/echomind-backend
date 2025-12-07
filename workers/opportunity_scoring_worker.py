@@ -654,8 +654,31 @@ class OpportunityScoringWorker:
                     # Calculate all scores
                     scores = self.score_opportunity(opp, brand_config)
 
-                    if scores is None:
+                    if scores is None or scores.get('excluded'):
                         excluded += 1
+                        # Still update the record to mark as excluded
+                        opp_id = opp.get("opportunity_id") or opp.get("id")
+                        if opp_id:
+                            try:
+                                exclude_data = {
+                                    "composite_score": 0,
+                                    "opportunity_score": 0,
+                                    "priority_tier": "EXCLUDED",
+                                    "scoring_debug": {
+                                        "excluded": True,
+                                        "reason": scores.get('exclude_reason', 'Unknown') if scores else 'No scores',
+                                        "scored_at": datetime.utcnow().isoformat()
+                                    },
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }
+                                if opp.get("opportunity_id"):
+                                    self.supabase.table("opportunities").update(exclude_data)\
+                                        .eq("opportunity_id", opp_id).execute()
+                                else:
+                                    self.supabase.table("opportunities").update(exclude_data)\
+                                        .eq("id", opp_id).execute()
+                            except Exception:
+                                pass  # Don't count this as an error
                         continue
 
                     # Get opportunity ID
@@ -664,13 +687,13 @@ class OpportunityScoringWorker:
                     # Update database
                     update_data = {
                         "timing_score": scores.get('timing_score'),
-                        "relevance_score": scores['relevance_score'],
-                        "commercial_intent_score": scores['commercial_intent_score'],
-                        "engagement_score": scores['engagement_score'],
-                        "composite_score": scores['composite_score'],
-                        "opportunity_score": scores['opportunity_score'],
-                        "priority_tier": scores['priority_tier'],
-                        "scoring_debug": scores['scoring_debug'],
+                        "relevance_score": scores.get('relevance_score'),
+                        "commercial_intent_score": scores.get('commercial_intent_score'),
+                        "engagement_score": scores.get('engagement_score'),
+                        "composite_score": scores.get('composite_score'),
+                        "opportunity_score": scores.get('opportunity_score'),
+                        "priority_tier": scores.get('priority_tier'),
+                        "scoring_debug": scores.get('scoring_debug'),
                         "updated_at": datetime.utcnow().isoformat()
                     }
 
