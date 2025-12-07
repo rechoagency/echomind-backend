@@ -2219,7 +2219,7 @@ async def trigger_voice_profile_refresh(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/generate-content-excel/{client_id}")
+@router.get("/generate-content-excel/{client_id}")
 async def generate_content_excel(
     client_id: str,
     limit: int = 25
