@@ -2264,19 +2264,25 @@ async def generate_content_excel(
         medical_industries = ['health', 'medical', 'wellness', 'supplement', 'vitamin', 'pharmaceutical', 'fertility']
         needs_medical_disclaimer = any(kw in industry for kw in medical_industries)
 
-        # Get opportunities
-        opps_response = supabase.table("opportunities")\
-            .select("*")\
-            .eq("client_id", client_id)\
-            .order("date_found", desc=True)\
-            .limit(limit)\
-            .execute()
+        # Get opportunities with scoring data - sort by weighted impact (highest first)
+        opps_response = supabase.table("opportunities")            .select("*")            .eq("client_id", client_id)            .limit(limit * 2)            .execute()
 
         if not opps_response.data:
             raise HTTPException(status_code=404, detail="No opportunities found for this client")
 
-        opportunities = opps_response.data
-        logger.info(f"📊 Found {len(opportunities)} opportunities")
+        # Calculate weighted scores and sort by impact (highest first)
+        def calculate_weighted_score(opp):
+            commercial = opp.get('commercial_intent_score', 0) or 0
+            relevance = opp.get('relevance_score', 0) or 0
+            engagement = opp.get('engagement_score', 0) or 0
+            timing = opp.get('timing_score', 0) or 0
+            return commercial * 0.35 + relevance * 0.25 + engagement * 0.20 + timing * 0.20
+
+        opportunities = sorted(opps_response.data, key=calculate_weighted_score, reverse=True)[:limit]
+        logger.info(f"📊 Found {len(opportunities)} opportunities (sorted by weighted impact)")
+
+        # Build opportunity lookup map for scoring data
+        opp_lookup = {opp.get('opportunity_id'): opp for opp in opportunities}
 
         # Generate content using ContentGenerationWorker
         from workers.content_generation_worker import ContentGenerationWorker
@@ -2293,6 +2299,17 @@ async def generate_content_excel(
 
         content_items = result.get("content", [])
         logger.info(f"📊 Generated {len(content_items)} content items")
+
+        # Get voice profiles for enhanced proof
+        voice_profiles = {}
+        try:
+            voice_response = supabase.table("voice_profiles").select("*").eq("client_id", client_id).execute()
+            for vp in (voice_response.data or []):
+                subreddit = vp.get('subreddit_name', '').lower()
+                voice_profiles[subreddit] = vp
+        except Exception as e:
+            logger.warning(f"Could not load voice profiles: {e}")
+
 
         # Create Excel workbook
         wb = openpyxl.Workbook()
@@ -2363,8 +2380,11 @@ async def generate_content_excel(
 
         # Write content rows
         for row_idx, item in enumerate(content_items, 2):
+            opp_id = item.get('opportunity_id')
+            opp = opp_lookup.get(opp_id, {})
+
             # Parse matched keywords
-            matched_keywords = item.get('matched_keywords', '')
+            matched_keywords = item.get('matched_keywords', '') or opp.get('matched_keywords', '')
             if isinstance(matched_keywords, list):
                 matched_keywords = ', '.join(matched_keywords)
             elif matched_keywords and matched_keywords.startswith('['):
@@ -2373,61 +2393,96 @@ async def generate_content_excel(
                 except:
                     pass
 
-            # Calculate scores (normalize to 0-100)
-            commercial_intent = item.get('commercial_intent_score', 50)
-            relevance = item.get('relevance_score', 50)
-            engagement = item.get('engagement_score', 50)
-            timing = item.get('timing_score', 70)
+            # GET REAL SCORES from opportunity data (0-10 scale)
+            commercial_intent = opp.get('commercial_intent_score', 0) or 0
+            relevance = opp.get('relevance_score', 0) or 0
+            engagement = opp.get('engagement_score', 0) or 0
+            timing = opp.get('timing_score', 0) or 0
 
-            # Calculate overall priority
-            avg_score = (commercial_intent + relevance + engagement + timing) / 4
-            if avg_score >= 70:
+            # Calculate overall priority using weighted formula
+            weighted_score = commercial_intent * 0.35 + relevance * 0.25 + engagement * 0.20 + timing * 0.20
+            if weighted_score >= 7.5:
                 overall_priority = "High"
-            elif avg_score >= 40:
+            elif weighted_score >= 5:
                 overall_priority = "Medium"
             else:
                 overall_priority = "Low"
 
-            # Urgency level
-            urgency_level = item.get('urgency_level', 'MEDIUM')
+            # Urgency level based on timing + commercial intent
+            if timing > 8 and commercial_intent > 7:
+                urgency_level = "Urgent"
+            elif timing > 7 or commercial_intent > 7:
+                urgency_level = "High"
+            else:
+                urgency_level = "Medium"
 
-            # Generate AI fields based on content
-            original_text = (item.get('original_post_text', '') or '')[:500]
-            thread_title = item.get('thread_title', '')
+            # Get original text and thread title
+            original_text = (item.get('original_post_text', '') or opp.get('original_post_text', '') or '')[:500]
+            thread_title = item.get('thread_title', '') or opp.get('thread_title', '')
 
-            # Context Summary (AI-generated summary of the opportunity)
+            # Context Summary (AI-generated)
             context_summary = f"User seeking advice about {thread_title[:50]}. Shows interest in community recommendations."
             if 'recommend' in original_text.lower() or 'suggestion' in original_text.lower():
                 context_summary = f"Active recommendation request: {thread_title[:40]}. High engagement potential."
             elif 'help' in original_text.lower() or 'question' in original_text.lower():
                 context_summary = f"Help-seeking post about {thread_title[:40]}. Good opportunity for expert advice."
 
-            # Buying Signal Location
-            buying_signals = []
-            if 'buy' in original_text.lower() or 'purchase' in original_text.lower():
-                buying_signals.append("Direct purchase intent")
-            if 'recommend' in original_text.lower():
-                buying_signals.append("Seeking recommendations")
-            if 'best' in original_text.lower():
-                buying_signals.append("Comparison shopping")
-            if 'worth' in original_text.lower():
-                buying_signals.append("Value assessment")
-            buying_signal_location = "; ".join(buying_signals) if buying_signals else "General interest/research phase"
+            # EXTRACT ACTUAL BUYING SIGNAL QUOTES
+            import re as re_local
+            buying_keywords = ['buy', 'purchase', 'looking for', 'recommend', 'best', 'worth', 'price', 'budget', 'cost', 'afford', 'get one', 'should i']
+            sentences = re_local.split(r'[.!?\n]+', original_text) if original_text else []
+            found_quotes = []
+            for sentence in sentences:
+                sentence_lower = sentence.lower().strip()
+                for keyword in buying_keywords:
+                    if keyword in sentence_lower and len(sentence.strip()) > 15:
+                        quote = sentence.strip()[:120]
+                        if quote and quote not in [q.strip('"') for q in found_quotes]:
+                            found_quotes.append(f'"{quote}"')
+                        break
+            buying_signal_location = " | ".join(found_quotes[:2]) if found_quotes else "No explicit buying signals - general discussion"
 
-            # Tone Match
+            # Tone Match and formality
             tone = item.get('tone', 'conversational')
             formality = item.get('formality_score', 0.5)
+            subreddit = item.get('subreddit', '') or opp.get('subreddit', '')
+
+            # BUILD ENHANCED VOICE SIMILARITY PROOF
+            sub_lower = subreddit.lower().replace('r/', '')
+            vp = voice_profiles.get(sub_lower, {})
+            proof_parts = []
+            vp_formality = vp.get('formality_score') or formality
+            vp_tone = vp.get('dominant_tone') or tone
+            proof_parts.append(f"r/{subreddit} voice: formality={round(vp_formality, 2)}, tone={vp_tone}")
+            content_text = item.get('text', '')
+            word_count = len(content_text.split()) if content_text else 0
+            avg_words = vp.get('avg_word_count', 75)
+            proof_parts.append(f"Length ({word_count} words) vs avg ({avg_words})")
+            style_notes = []
+            if content_text and '!' not in content_text[:200]:
+                style_notes.append("no exclamation marks")
+            if content_text and not any(e in content_text for e in ['\U0001f44d', '\U0001f60a', '\U0001f525', '\U0001f4af']):
+                style_notes.append("no emojis")
+            if formality > 0.6:
+                style_notes.append("proper capitalization")
+            if style_notes:
+                proof_parts.append(f"Style: {', '.join(style_notes)}")
+            common_vocab = vp.get('common_vocabulary', [])
+            if common_vocab and isinstance(common_vocab, list):
+                proof_parts.append(f"Vocab: {', '.join(str(v) for v in common_vocab[:3])}")
+            voice_similarity_proof = " | ".join(proof_parts)
+
+            # Tone match description
             if formality < 0.3:
-                tone_match = f"Casual/informal - matches r/{item.get('subreddit', '')} community voice"
+                tone_match = f"Casual/informal - matches r/{subreddit} community voice"
             elif formality < 0.6:
                 tone_match = f"Conversational - {tone}"
             else:
                 tone_match = f"Semi-formal/professional - {tone}"
 
-            # Product Link
-            brand_mentioned = item.get('brand_mentioned', False)
-            product_mentioned = item.get('product_mentioned', False)
-            if brand_mentioned or product_mentioned:
+            # PRODUCT LINK - Only show if brand ACTUALLY appears in generated content
+            brand_in_content = company_name.lower() in content_text.lower() if content_text and company_name else False
+            if brand_in_content:
                 product_link = client.get('website_url', 'See brand website')
             else:
                 product_link = "N/A"
@@ -2443,30 +2498,30 @@ async def generate_content_excel(
             backup_plan = "If thread gets locked or removed, save content for similar future opportunities. Consider posting in related subreddits if appropriate."
 
             # Thread Status
-            thread_status = "Active" if timing >= 50 else "Aging"
+            thread_status = "Active" if timing >= 5 else "Aging"
 
             # Row data (31 columns)
             row_data = [
-                str(item.get('opportunity_id', ''))[:36],           # 1: Opportunity ID
-                item.get('date_found', ''),                         # 2: Date Found
-                f"r/{item.get('subreddit', '')}",                   # 3: Subreddit
+                str(opp_id or '')[:36],                              # 1: Opportunity ID
+                item.get('date_found', '') or opp.get('date_found', ''),  # 2: Date Found
+                f"r/{subreddit}",                                    # 3: Subreddit
                 thread_title,                                        # 4: Thread Title
-                item.get('thread_url', ''),                         # 5: Thread URL
+                item.get('thread_url', '') or opp.get('thread_url', ''),  # 5: Thread URL
                 original_text,                                       # 6: Original Post/Comment
                 context_summary,                                     # 7: Context Summary (AI)
-                commercial_intent,                                   # 8: Commercial Intent Score
-                relevance,                                           # 9: Relevance Score
-                engagement,                                          # 10: Engagement Score
-                timing,                                              # 11: Timing Score
+                commercial_intent,                                   # 8: Commercial Intent Score (0-10)
+                relevance,                                           # 9: Relevance Score (0-10)
+                engagement,                                          # 10: Engagement Score (0-10)
+                timing,                                              # 11: Timing Score (0-10)
                 overall_priority,                                    # 12: Overall Priority
                 urgency_level,                                       # 13: Urgency Level
-                buying_signal_location,                              # 14: Buying Signal Location (AI)
+                buying_signal_location,                              # 14: Buying Signal Location (actual quotes)
                 item.get('type', 'REPLY').upper(),                  # 15: Content Type
-                item.get('text', ''),                               # 16: Suggested Reply/Post
+                content_text,                                        # 16: Suggested Reply/Post
                 "",                                                  # 17: Revised (empty)
-                item.get('voice_similarity_proof', ''),             # 18: Voice Similarity Proof
+                voice_similarity_proof,                              # 18: Voice Similarity Proof (enhanced)
                 tone_match,                                          # 19: Tone Match (AI)
-                product_link,                                        # 20: Product Link
+                product_link,                                        # 20: Product Link (N/A if no brand in content)
                 "Yes" if needs_medical_disclaimer else "No",        # 21: Medical Disclaimer Needed?
                 ideal_window,                                        # 22: Ideal Engagement Window
                 "Yes",                                               # 23: Mod-Friendly?
@@ -2476,7 +2531,7 @@ async def generate_content_excel(
                 backup_plan,                                         # 27: Backup Plan (AI)
                 thread_status,                                       # 28: Thread Status
                 matched_keywords,                                    # 29: Keywords/Tags
-                f"Voice: {item.get('tone', 'conversational')} | KB: {item.get('knowledge_insights_used', 0)} insights",  # 30: Additional Notes
+                f"Voice: {tone} | KB: {item.get('knowledge_insights_used', 0)} insights | Score: {round(weighted_score, 2)}",  # 30: Additional Notes
                 item.get('assigned_profile', 'TBD'),                # 31: Posting Account
             ]
 
