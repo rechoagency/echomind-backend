@@ -2590,9 +2590,12 @@ async def generate_content_excel(
 @router.get("/debug-scored-opportunities/{client_id}")
 async def debug_scored_opportunities(client_id: str, limit: int = 5):
     """Debug endpoint to check if opportunity scores are being saved with v2.0 scoring"""
-    supabase = get_supabase_client()
-
+    import traceback
     try:
+        supabase = get_supabase_client()
+        if not supabase:
+            return {"error": "Supabase client not available"}
+
         # Get all columns to see what's available
         all_opps = supabase.table("opportunities")\
             .select("*")\
@@ -2601,18 +2604,27 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
             .limit(limit)\
             .execute()
 
+        if not all_opps.data:
+            return {
+                "client_id": client_id,
+                "total_returned": 0,
+                "scored_in_sample": 0,
+                "unscored_in_sample": 0,
+                "message": "No opportunities found for this client"
+            }
+
         # Count how many have composite_score set
-        scored = [o for o in (all_opps.data or []) if o.get('composite_score') is not None]
-        unscored = [o for o in (all_opps.data or []) if o.get('composite_score') is None]
+        scored = [o for o in all_opps.data if o.get('composite_score') is not None]
+        unscored = [o for o in all_opps.data if o.get('composite_score') is None]
 
         # Get column names from first result
-        columns = list(all_opps.data[0].keys()) if all_opps.data else []
+        columns = list(all_opps.data[0].keys())
 
         # Extract just scoring columns for display
         scoring_fields = ['commercial_intent_score', 'relevance_score', 'engagement_score',
                           'composite_score', 'priority_tier', 'opportunity_score']
         sample_scores = []
-        for opp in (all_opps.data or [])[:3]:
+        for opp in all_opps.data[:3]:
             sample_scores.append({
                 'opportunity_id': opp.get('opportunity_id'),
                 'thread_title': (opp.get('thread_title') or '')[:50],
@@ -2621,7 +2633,7 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
 
         return {
             "client_id": client_id,
-            "total_returned": len(all_opps.data or []),
+            "total_returned": len(all_opps.data),
             "scored_in_sample": len(scored),
             "unscored_in_sample": len(unscored),
             "available_columns": columns,
@@ -2629,5 +2641,5 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         }
     except Exception as e:
         logger.error(f"Debug endpoint error: {e}")
-        import traceback
+        logger.error(traceback.format_exc())
         return {"error": str(e), "traceback": traceback.format_exc()}
