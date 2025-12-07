@@ -2264,12 +2264,12 @@ async def generate_content_excel(
         medical_industries = ['health', 'medical', 'wellness', 'supplement', 'vitamin', 'pharmaceutical', 'fertility']
         needs_medical_disclaimer = any(kw in industry for kw in medical_industries)
 
-        # Get opportunities with scoring data - prioritize scored ones (composite_score not null)
-        # Order by composite_score DESC NULLS LAST to get scored opportunities first
+        # Get opportunities with scoring data - prioritize recently scored ones
+        # Order by updated_at DESC to get recently scored opportunities first
         opps_response = supabase.table("opportunities")\
             .select("*")\
             .eq("client_id", client_id)\
-            .order("composite_score", desc=True, nullsfirst=False)\
+            .order("updated_at", desc=True)\
             .limit(limit * 4)\
             .execute()
 
