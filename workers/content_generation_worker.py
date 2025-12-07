@@ -1,13 +1,14 @@
 """
-Content Generation Worker - UPDATED with Slider Integration
-Generates natural Reddit responses with slider-based strategy controls
+Content Generation Worker - COMPLETE OVERHAUL v2.0
+Generates natural Reddit responses with anti-AI detection and voice matching
 """
 
 import os
 import logging
 import json
 import random
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 from supabase import create_client, Client
 from openai import OpenAI
@@ -27,6 +28,69 @@ from services.strategy_progression_service import StrategyProgressionService
 from services.knowledge_matchback_service import KnowledgeMatchbackService
 from utils.retry_decorator import retry_on_openai_error
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ANTI-AI DETECTION PATTERNS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+AI_FORBIDDEN_PATTERNS = [
+    # Hyphens and dashes
+    r'—',  # em dash
+    r'–',  # en dash
+    # Bullet points and lists
+    r'^\s*[-•*]\s',  # bullet points at start of line
+    r'^\s*\d+\.\s',  # numbered lists
+    # AI-typical phrases
+    r'\bI understand\b',
+    r'\bI hear you\b',
+    r"\bHere's what I (think|recommend|suggest)\b",
+    r"\bI would (suggest|recommend)\b",
+    r'\bThat said\b',
+    r'\bThat being said\b',
+    r'\bHope this helps\b',
+    r"\bFeel free to\b",
+    r"\bDon't hesitate to\b",
+    r'\bAbsolutely!\b',
+    r'\bGreat question\b',
+    r'\bThanks for (sharing|asking|reaching)\b',
+]
+
+AI_FORBIDDEN_STARTERS = [
+    'So,',
+    'Well,',
+    'Honestly,',
+    'Actually,',
+    'Look,',
+    'Here\'s the thing',
+    'I\'d say',
+    'I think',
+    'In my opinion',
+    'From my experience',
+]
+
+# Common typos to inject based on keyboard proximity
+TYPO_SUBSTITUTIONS = {
+    'the': ['teh', 'hte'],
+    'and': ['adn', 'nad'],
+    'with': ['wiht', 'wtih'],
+    'that': ['taht', 'tath'],
+    'have': ['ahve', 'hvae'],
+    'just': ['jsut', 'jutst'],
+    'your': ['yoru', 'yuor'],
+    'this': ['thsi', 'tihs'],
+    'really': ['realy', 'realyl'],
+    'definitely': ['definately', 'definitly', 'definetly'],
+    'probably': ['probaly', 'prolly'],
+    'would': ['woudl', 'wuold'],
+    'could': ['coudl', 'cuold'],
+    'should': ['shoudl', 'shuold'],
+    'because': ['becuase', 'becasue', 'bc'],
+    'through': ['thru', 'thorugh'],
+    'though': ['tho', 'thoguh'],
+    'something': ['somethign', 'somethin'],
+    'anything': ['anythign', 'anythin'],
+}
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,9 +107,9 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0)
 
 class ContentGenerationWorker:
     """
-    Worker that generates Reddit responses with slider-based strategy controls
+    Worker that generates Reddit responses with anti-AI detection and voice matching
     """
-    
+
     def __init__(self):
         """Initialize the content generation worker"""
         self.supabase = supabase
@@ -53,7 +117,223 @@ class ContentGenerationWorker:
         self.profile_rotation = ProfileRotationService()
         self.strategy_progression = StrategyProgressionService()
         self.knowledge_matchback = KnowledgeMatchbackService(supabase)
-        logger.info("Content Generation Worker initialized (WITH PROFILE ROTATION, TIME-BASED STRATEGY & KNOWLEDGE BASE RAG)")
+        logger.info("Content Generation Worker v2.0 initialized (ANTI-AI DETECTION + VOICE MATCHING)")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ANTI-AI DETECTION & HUMANIZATION FUNCTIONS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def detect_ai_patterns(self, content: str) -> List[str]:
+        """
+        Detect AI-typical patterns in generated content.
+        Returns list of violations found.
+        """
+        violations = []
+
+        # Check forbidden patterns
+        for pattern in AI_FORBIDDEN_PATTERNS:
+            if re.search(pattern, content, re.IGNORECASE | re.MULTILINE):
+                violations.append(f"Pattern: {pattern}")
+
+        # Check forbidden starters
+        content_stripped = content.strip()
+        for starter in AI_FORBIDDEN_STARTERS:
+            if content_stripped.startswith(starter):
+                violations.append(f"Starter: {starter}")
+
+        # Check for consistent sentence starters (AI tends to repeat patterns)
+        sentences = re.split(r'[.!?]\s+', content)
+        if len(sentences) >= 3:
+            starters = [s.split()[0].lower() if s.split() else '' for s in sentences[:5]]
+            if len(starters) > 0 and starters.count(starters[0]) >= 3:
+                violations.append(f"Repeated starter: {starters[0]}")
+
+        return violations
+
+    def inject_typos(self, content: str, typo_count: int = 1) -> str:
+        """
+        Inject natural-looking typos into content.
+        Only injects into words that appear in TYPO_SUBSTITUTIONS.
+        """
+        if typo_count <= 0:
+            return content
+
+        words = content.split()
+        typo_candidates = []
+
+        # Find words that can have typos
+        for i, word in enumerate(words):
+            word_lower = word.lower().strip('.,!?;:')
+            if word_lower in TYPO_SUBSTITUTIONS:
+                typo_candidates.append((i, word_lower, word))
+
+        # Randomly select words to typo
+        if typo_candidates:
+            selected = random.sample(typo_candidates, min(typo_count, len(typo_candidates)))
+            for idx, word_lower, original in selected:
+                typo = random.choice(TYPO_SUBSTITUTIONS[word_lower])
+                # Preserve original casing and punctuation
+                if original[0].isupper():
+                    typo = typo.capitalize()
+                # Preserve trailing punctuation
+                trailing = ''
+                for char in reversed(original):
+                    if char in '.,!?;:':
+                        trailing = char + trailing
+                    else:
+                        break
+                words[idx] = typo + trailing
+
+        return ' '.join(words)
+
+    def apply_lowercase_starts(self, content: str, lowercase_pct: float) -> str:
+        """
+        Randomly lowercase sentence starts based on percentage.
+        """
+        if lowercase_pct <= 0:
+            return content
+
+        sentences = re.split(r'([.!?]\s+)', content)
+        result = []
+
+        for i, part in enumerate(sentences):
+            if i % 2 == 0 and part:  # This is a sentence, not punctuation
+                if random.random() * 100 < lowercase_pct and len(part) > 0:
+                    # Lowercase the first character
+                    part = part[0].lower() + part[1:] if len(part) > 1 else part.lower()
+            result.append(part)
+
+        return ''.join(result)
+
+    def vary_contractions(self, content: str, contraction_rate: float) -> str:
+        """
+        Randomly expand or contract words based on contraction rate.
+        """
+        # Expansion pairs (contracted -> expanded)
+        expansions = {
+            "don't": "do not",
+            "can't": "cannot",
+            "won't": "will not",
+            "wouldn't": "would not",
+            "couldn't": "could not",
+            "shouldn't": "should not",
+            "isn't": "is not",
+            "aren't": "are not",
+            "wasn't": "was not",
+            "weren't": "were not",
+            "haven't": "have not",
+            "hasn't": "has not",
+            "hadn't": "had not",
+            "it's": "it is",
+            "that's": "that is",
+            "there's": "there is",
+            "here's": "here is",
+            "what's": "what is",
+            "who's": "who is",
+            "i'm": "I am",
+            "you're": "you are",
+            "we're": "we are",
+            "they're": "they are",
+            "i've": "I have",
+            "you've": "you have",
+            "we've": "we have",
+            "they've": "they have",
+            "i'd": "I would",
+            "you'd": "you would",
+            "we'd": "we would",
+            "they'd": "they would",
+            "i'll": "I will",
+            "you'll": "you will",
+            "we'll": "we will",
+            "they'll": "they will",
+        }
+
+        # If high contraction rate, keep contractions; if low, expand some
+        if contraction_rate > 50:
+            return content  # Keep as-is (likely already has contractions)
+
+        # Randomly expand some contractions
+        for contracted, expanded in expansions.items():
+            if contracted in content.lower():
+                # Find and replace with probability based on rate
+                if random.random() * 100 > contraction_rate:
+                    # Case-insensitive replacement
+                    pattern = re.compile(re.escape(contracted), re.IGNORECASE)
+                    content = pattern.sub(expanded, content, count=1)
+
+        return content
+
+    def generate_voice_similarity_proof(
+        self,
+        voice_profile: Dict,
+        content: str,
+        subreddit: str
+    ) -> str:
+        """
+        Generate explanation of how content matches the subreddit voice.
+        This goes in the Voice Similarity Proof column of the Excel.
+        """
+        proofs = []
+
+        vp = voice_profile.get('voice_profile', voice_profile) if voice_profile else {}
+
+        # Tone match
+        tone = vp.get('dominant_tone') or vp.get('tone', 'conversational')
+        proofs.append(f"Tone: {tone}")
+
+        # Formality match
+        formality = vp.get('formality_score', 0.5)
+        if formality < 0.3:
+            proofs.append("casual/informal register")
+        elif formality < 0.6:
+            proofs.append("conversational register")
+        else:
+            proofs.append("semi-formal register")
+
+        # Check for unique vocabulary used
+        unique_vocab = vp.get('unique_vocabulary', [])
+        content_lower = content.lower()
+        vocab_used = [v for v in unique_vocab[:10] if v.lower() in content_lower]
+        if vocab_used:
+            proofs.append(f"community vocab: {', '.join(vocab_used[:3])}")
+
+        # Check for common phrases used
+        common_phrases = vp.get('common_phrases', [])
+        phrases_used = [p for p in common_phrases[:10] if p.lower() in content_lower]
+        if phrases_used:
+            proofs.append(f"natural phrasing")
+
+        # Word count analysis
+        avg_words = vp.get('avg_word_count', 75)
+        actual_words = len(content.split())
+        if abs(actual_words - avg_words) < avg_words * 0.3:
+            proofs.append(f"length matches r/{subreddit} avg")
+
+        return "; ".join(proofs) if proofs else "Matches general subreddit tone"
+
+    def calculate_target_word_count(self, voice_profile: Dict) -> int:
+        """
+        Calculate target word count with ±30% variation from voice profile average.
+        """
+        vp = voice_profile.get('voice_profile', voice_profile) if voice_profile else {}
+        avg_words = vp.get('avg_word_count', 75)
+
+        # Apply ±30% variation
+        min_words = int(avg_words * 0.7)
+        max_words = int(avg_words * 1.3)
+
+        return random.randint(min_words, max_words)
+
+    def get_formality_level(self, score: float) -> str:
+        """Convert formality score to human-readable level."""
+        if score < 0.3:
+            return "very casual"
+        elif score < 0.5:
+            return "casual"
+        elif score < 0.7:
+            return "conversational"
+        else:
+            return "semi-formal"
 
     @retry_on_openai_error(max_attempts=3)
     def _call_openai_with_retry(self, prompt: str, max_tokens: int = 250) -> str:
@@ -213,23 +493,50 @@ class ContentGenerationWorker:
         mention_product: bool,
         brand_name: str,
         client_data: Optional[Dict] = None
-    ) -> str:
+    ) -> Tuple[str, Dict]:
         """
         Build the complete prompt for GPT-4 content generation.
-
-        This prompt has FIVE layers:
-        1. GLOBAL RULES - Same for all content (authenticity, no fake experience)
-        2. DYNAMIC VOICE - From learned subreddit patterns (changes per subreddit)
-        3. DYNAMIC KNOWLEDGE - From brand's RAG (changes per client)
-        4. THREAD CONTEXT - The specific post being replied to
-        5. BRAND MENTION - Instructions for brand/product mentions
+        COMPLETELY REWRITTEN for anti-AI detection.
 
         Returns:
-            Complete prompt string for GPT-4
+            Tuple of (prompt string, voice_params dict for post-processing)
         """
         thread_title = opportunity.get("thread_title", "")
         thread_content = opportunity.get("original_post_text", "")
         subreddit = opportunity.get("subreddit", "")
+
+        # Extract voice parameters for post-processing
+        vp = {}
+        if voice_profile:
+            vp = voice_profile.get('voice_profile', voice_profile)
+
+        formality = vp.get('formality_score', 0.5)
+        formality_level = self.get_formality_level(formality)
+        avg_words = vp.get('avg_word_count', 75)
+        target_words = self.calculate_target_word_count(voice_profile or {})
+        lowercase_pct = vp.get('lowercase_start_pct', 15)
+        contraction_rate = vp.get('contraction_rate', 50)
+        exclamation_pct = vp.get('exclamation_usage_pct', 5)
+        tone = vp.get('dominant_tone') or vp.get('tone', 'helpful, direct')
+        unique_vocab = vp.get('unique_vocabulary', [])[:5]
+        common_phrases = vp.get('common_phrases', [])[:3]
+
+        # Calculate typo count based on formality
+        typo_count = 0
+        if formality < 0.4:
+            typo_count = random.choice([0, 1, 1])  # Sometimes add typo in casual subs
+        elif formality < 0.6:
+            typo_count = random.choice([0, 0, 1])  # Rarely add typo
+
+        # Voice parameters for post-processing
+        voice_params = {
+            'formality': formality,
+            'lowercase_pct': lowercase_pct,
+            'contraction_rate': contraction_rate,
+            'typo_count': typo_count,
+            'target_words': target_words,
+            'tone': tone,
+        }
 
         # Check if brand owns this subreddit
         owned_subreddits = []
@@ -237,353 +544,87 @@ class ContentGenerationWorker:
             owned_subreddits = client_data.get('owned_subreddits', []) or client_data.get('brand_owned_subreddits', [])
         is_owned = subreddit in owned_subreddits or f"r/{subreddit}" in owned_subreddits
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # LAYER 1: GLOBAL AUTHENTICITY RULES (same for ALL content)
-        # ═══════════════════════════════════════════════════════════════════════
-
-        global_rules = f"""
-══════════════════════════════════════════════════════════════════════════════
-AUTHENTICITY RULES (MANDATORY - APPLY TO ALL CONTENT)
-══════════════════════════════════════════════════════════════════════════════
-
-You are writing a Reddit response on behalf of {brand_name}, posting from a brand-affiliated account.
-
-CRITICAL - WHAT YOU ARE:
-- An industry professional who works in this space
-- Someone with genuine expertise who participates in Reddit communities
-- A helpful community member who happens to have brand knowledge
-
-CRITICAL - WHAT YOU ARE NOT:
-- A fake customer pretending to have bought the product
-- A shill writing fake testimonials
-- A corporate PR bot
-
-MANDATORY RULES:
-
-1. NEVER FAKE PERSONAL PRODUCT EXPERIENCE
-   ❌ FORBIDDEN: "I bought this and loved it!", "When I got mine...", "I've been using this for months"
-   ❌ FORBIDDEN: "I had the same problem!", "This happened to me too!", "I dealt with this"
-   ✅ CORRECT: "You'll find that...", "Most people report...", "The typical experience is..."
-   ✅ CORRECT: "Based on what we see...", "Customers typically...", "In this situation..."
-
-2. USE SECOND PERSON, NOT FIRST PERSON
-   ❌ FORBIDDEN: "I recommend...", "I would suggest...", "I think you should..."
-   ✅ CORRECT: "You'll want to...", "Consider...", "The best approach is..."
-   ✅ ACCEPTABLE: "We make [product]" or "Our [product]" - this is honest, not deceptive
-
-3. NO CORPORATE MARKETING PHRASES
-   ❌ FORBIDDEN: "That's a great question!", "Thanks for reaching out!"
-   ❌ FORBIDDEN: "Hope this helps!", "We're happy to help!", "Feel free to ask!"
-   ❌ FORBIDDEN: "We pride ourselves on...", "Our commitment to quality..."
-   ✅ CORRECT: Just provide the helpful information directly, no preamble or sign-off
-
-4. BE HONEST ABOUT LIMITATIONS
-   ✅ CORRECT: "This won't work for every situation - specifically..."
-   ✅ CORRECT: "The main downside is...", "One thing to be aware of..."
-   This builds credibility and trust.
-
-5. EXPERTISE WITHOUT ARROGANCE
-   ✅ CORRECT: "The main thing with [topic] is..." (sharing knowledge)
-   ✅ CORRECT: "What most people don't realize is..." (insider info)
-   ❌ FORBIDDEN: "Actually, you're wrong about..." (condescending)
-"""
-
-        # ═══════════════════════════════════════════════════════════════════════
-        # LAYER 2: DYNAMIC VOICE (learned from subreddit users)
-        # ═══════════════════════════════════════════════════════════════════════
-
-        if voice_profile and not voice_profile.get('is_fallback'):
-            # Use ACTUAL learned patterns from the voice_profile JSONB column
-            vp = voice_profile.get('voice_profile', voice_profile)
-
-            # Length patterns
-            avg_words = vp.get('avg_word_count') or 75
-            word_range = vp.get('word_count_range') or {"min": 30, "max": 200}
-            short_reply_prob = vp.get('short_reply_probability') or 0.4
-
-            # Grammar patterns
-            cap_style = vp.get('capitalization_style') or 'mixed'
-            lowercase_pct = vp.get('lowercase_start_pct') or 25
-            formality = vp.get('formality_score') or 0.35
-            formality_level = vp.get('formality_level') or 'LOW'
-
-            # Lexical patterns - NOW DYNAMIC (learned from actual data)
-            common_phrases = vp.get('common_phrases') or []
-            unique_vocab = vp.get('unique_vocabulary') or []  # Learned unique words
-            abbreviations_slang = vp.get('abbreviations_slang') or []  # Learned abbreviations
-            idioms = vp.get('signature_idioms') or []
-            vocab_richness = vp.get('vocabulary_richness') or 0
-
-            # Emoji patterns
-            emoji_freq = vp.get('emoji_frequency') or 'rare'
-            common_emojis = vp.get('common_emojis') or []
-
-            # Tone patterns - DYNAMICALLY CALCULATED
-            tone = vp.get('tone') or vp.get('dominant_tone') or 'helpful'
-            grammar_style = vp.get('grammar_style') or 'conversational'
-            formality_breakdown = vp.get('formality_breakdown') or {}
-
-            # Content patterns
-            openers = vp.get('example_openers') or []
-            closers = vp.get('example_closers') or []
-            exclamation_pct = vp.get('exclamation_usage_pct') or 5
-            question_freq = vp.get('question_frequency') or 0.1
-            contraction_rate = vp.get('contraction_rate') or 5.0
-            avg_word_length = vp.get('avg_word_length') or 4.5
-
-            # Metadata
-            comments_analyzed = vp.get('comments_analyzed') or 0
-            users_analyzed = vp.get('users_analyzed') or 0
-            sample_comments = vp.get('sample_comments') or []
-            voice_description = vp.get('voice_description') or ''
-            learning_method = vp.get('learning_method') or 'unknown'
-
-            # Format lists
-            phrases_str = ', '.join(f'"{p}"' for p in common_phrases[:8]) if common_phrases else 'none identified'
-            unique_vocab_str = ', '.join(unique_vocab[:10]) if unique_vocab else 'no unique vocabulary identified'
-            abbrev_str = ', '.join(abbreviations_slang[:8]) if abbreviations_slang else 'no abbreviations/slang found'
-            idioms_str = ', '.join(f'"{i}"' for i in idioms[:5]) if idioms else 'none identified'
-            openers_str = ', '.join(f'"{o}"' for o in openers[:5]) if openers else 'no specific patterns'
-            emojis_str = ', '.join(common_emojis[:5]) if common_emojis else 'none'
-
-            voice_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-SUBREDDIT VOICE PROFILE (LEARNED FROM r/{subreddit} USERS)
-══════════════════════════════════════════════════════════════════════════════
-
-These patterns were DYNAMICALLY LEARNED from analyzing {comments_analyzed} real comments
-by {users_analyzed} users in r/{subreddit}. MATCH THEM.
-Learning method: {learning_method} | Vocabulary richness: {vocab_richness} unique words
-
-LENGTH & STYLE:
-- Average reply length: {avg_words} words
-- Typical range: {word_range.get('min', 30)} to {word_range.get('max', 200)} words
-- Short replies (<50 words): {round(short_reply_prob * 100)}% of posts
-- Average word length: {avg_word_length} characters
-- Keep your response within this range unless the topic requires more detail
-
-GRAMMAR & CAPITALIZATION:
-- Style: {cap_style}
-- {lowercase_pct}% of sentences start lowercase (match this roughly)
-- Contraction usage: {contraction_rate}% of words
-- {"Use sentence fragments freely - users here don't always write complete sentences" if formality < 0.3 else "Write in complete sentences"}
-
-FORMALITY: {formality} / {formality_level} (0=very casual, 1=very formal)
-- {"Very casual - contractions, relaxed grammar, conversational" if formality < 0.3 else "Moderately formal - clear but not stiff" if formality < 0.6 else "More formal - proper grammar, professional tone"}
-{f"- Breakdown: word_length={formality_breakdown.get('word_length', 'N/A')}, caps={formality_breakdown.get('capitalization', 'N/A')}, contractions={formality_breakdown.get('contractions', 'N/A')}" if formality_breakdown else ""}
-
-COMMON PHRASES IN THIS COMMUNITY:
-{phrases_str}
-→ Use 1-2 of these naturally if they fit
-
-UNIQUE VOCABULARY (learned from this community):
-{unique_vocab_str}
-→ These words are more common here than in general English - use naturally if appropriate
-
-ABBREVIATIONS/SLANG (learned):
-{abbrev_str}
-→ Use if natural, don't force it
-
-SUBREDDIT-SPECIFIC IDIOMS:
-{idioms_str}
-
-EMOJI USAGE: {emoji_freq}
-{f"Common emojis: {emojis_str}" if common_emojis else ""}
-→ {"Use emojis occasionally" if emoji_freq in ['occasional', 'frequent'] else "Avoid emojis or use very sparingly"}
-
-TONE: {tone}
-- Grammar style: {grammar_style}
-→ Match this tone in your response
-
-EXAMPLE OPENERS USED IN THIS SUB:
-{openers_str}
-→ Consider starting similarly (but don't copy exactly)
-
-EXCLAMATION MARKS: {exclamation_pct}% of sentences
-→ {"Use exclamations freely" if exclamation_pct > 15 else "Use exclamations sparingly" if exclamation_pct > 5 else "Avoid exclamation marks mostly"}
-
-{f'VOICE SUMMARY: {voice_description}' if voice_description else ''}
-"""
-
-            # Add sample comments for reference
-            if sample_comments:
-                voice_section += f"""
-
-EXAMPLE REAL COMMENTS FROM r/{subreddit} (for style reference only):
-"""
-                for i, sample in enumerate(sample_comments[:3], 1):
-                    sample_text = sample.get('text', '')[:250]
-                    voice_section += f'\n{i}. "{sample_text}..."'
-
-        else:
-            # Fallback for when no profile exists
-            voice_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-SUBREDDIT VOICE (r/{subreddit} - DEFAULT REDDIT STYLE)
-══════════════════════════════════════════════════════════════════════════════
-
-No specific voice profile available. Use general Reddit casual style:
-- Conversational, helpful tone
-- 50-150 words typical
-- Contractions OK
-- Minimal emojis
-- Get to the point quickly
-"""
-
-        # ═══════════════════════════════════════════════════════════════════════
-        # LAYER 3: DYNAMIC KNOWLEDGE (from brand's RAG)
-        # ═══════════════════════════════════════════════════════════════════════
-
+        # Build knowledge context
+        knowledge_text = ""
         if knowledge_insights and len(knowledge_insights) > 0:
-            knowledge_text = "\n\n".join([
-                f"• {insight.get('excerpt', insight.get('chunk_text', ''))[:500]}"
-                for insight in knowledge_insights[:5]
+            knowledge_text = "\n".join([
+                f"- {insight.get('excerpt', insight.get('chunk_text', ''))[:400]}"
+                for insight in knowledge_insights[:3]
             ])
-            knowledge_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-BRAND KNOWLEDGE (USE WHEN RELEVANT)
-══════════════════════════════════════════════════════════════════════════════
 
-The following information is from {brand_name}'s knowledge base. Use it when relevant,
-but don't force it if it doesn't fit the question.
+        # Build unique vocab string
+        vocab_str = ", ".join(unique_vocab) if unique_vocab else "none"
+        phrases_str = ", ".join(f'"{p}"' for p in common_phrases) if common_phrases else "none"
 
-{knowledge_text}
-
-RULES FOR USING THIS KNOWLEDGE:
-- Incorporate naturally, don't dump facts
-- Prefer specific details over vague claims
-- Frame as "research shows..." or "data indicates..." (not "our research")
-- If the thread isn't about these topics, don't mention them
-- This positions you as knowledgeable, not as a marketer
-"""
+        # Brand mention context
+        brand_context = ""
+        if is_owned:
+            brand_context = f"This is {brand_name}'s own subreddit. You can be promotional."
+        elif mention_brand or mention_product:
+            brand_context = f"You MAY mention {brand_name} as ONE option (not the only one). Be honest about limitations."
         else:
-            knowledge_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-BRAND KNOWLEDGE
-══════════════════════════════════════════════════════════════════════════════
-
-No specific product knowledge retrieved for this thread.
-Provide helpful general expertise based on the topic.
-"""
+            brand_context = "Do NOT mention brand or products. Focus on general helpful advice."
 
         # ═══════════════════════════════════════════════════════════════════════
-        # LAYER 4: THREAD CONTEXT
+        # THE NEW ANTI-AI PROMPT STRUCTURE
         # ═══════════════════════════════════════════════════════════════════════
 
-        thread_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-THREAD TO RESPOND TO
-══════════════════════════════════════════════════════════════════════════════
+        prompt = f"""You are writing a Reddit reply as a real community member of r/{subreddit}.
 
+VOICE PROFILE FOR r/{subreddit}:
+- Formality: {formality:.2f} ({formality_level})
+- Tone: {tone}
+- Target reply length: {target_words} words (THIS IS IMPORTANT - vary naturally)
+- Lowercase sentence starts: {lowercase_pct}% of the time
+- Exclamation usage: {exclamation_pct}%
+- Contraction rate: {contraction_rate}%
+- Unique vocabulary to use naturally: {vocab_str}
+- Common phrases in this community: {phrases_str}
+
+THREAD CONTEXT:
 Subreddit: r/{subreddit}
 Title: {thread_title}
+Original post: {thread_content[:1500] if thread_content else '[No content]'}
 
-Post Content:
-{thread_content[:2000] if thread_content else '[No post content]'}
-"""
+{f"CLIENT KNOWLEDGE (use subtly if relevant):{chr(10)}{knowledge_text}" if knowledge_text else ""}
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # LAYER 5: BRAND MENTION INSTRUCTIONS
-        # ═══════════════════════════════════════════════════════════════════════
+BRAND CONTEXT: {brand_context}
 
-        if is_owned:
-            # Brand-owned subreddit - promotional allowed
-            brand_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-BRAND MENTION (OWNED SUBREDDIT)
-══════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL ANTI-AI RULES - VIOLATION = REJECTION
+═══════════════════════════════════════════════════════════════════════════════
 
-This is a {brand_name}-owned community. You may be promotional:
-- Highlight {brand_name} products and services
-- Use official brand voice
-- Include calls-to-action
-- Share brand news and updates
-"""
-        elif mention_brand or mention_product:
-            brand_section = f"""
-══════════════════════════════════════════════════════════════════════════════
-BRAND MENTION GUIDANCE
-══════════════════════════════════════════════════════════════════════════════
+ABSOLUTELY FORBIDDEN (will be detected and rejected):
+1. NO hyphens (—, –) EVER
+2. NO bullet points or numbered lists
+3. NO "I understand your situation" or "I hear you"
+4. NO "Here's what I think/recommend/suggest"
+5. NO "That said" or "That being said"
+6. NO "Hope this helps" or "Feel free to ask"
+7. NO "Absolutely!" or "Great question!"
+8. NO perfect grammar if formality < 0.5 (use some fragments)
+9. DO NOT start with: So, Well, Honestly, Actually, Look, Here's the thing
 
-{"You MAY mention " + brand_name + " in this response." if mention_brand else ""}
-{"You MAY mention specific products if relevant." if mention_product else ""}
+REQUIRED HUMANIZATION:
+- Start differently than typical AI (not with "So" or "Well")
+- {"Write casually with occasional fragments" if formality < 0.4 else "Write conversationally but clearly" if formality < 0.7 else "Write clearly and directly"}
+- {"Start some sentences lowercase" if lowercase_pct > 10 else "Use proper capitalization"}
+- Vary your sentence length (some short, some longer)
+- Sound like a tired real person, not an eager AI assistant
+- End naturally without a call to action or summary
 
-RULES:
-- Mention as ONE option, not the only solution
-- Be honest about pros AND cons
-- Frame as "we make" or "our product" - NOT as fake customer testimonial
-- Don't oversell - let the helpfulness speak for itself
+EXPERTISE RULES:
+- You're an industry professional, NOT a fake customer
+- Say "You'll want to..." not "I recommend..."
+- Say "Most people find..." not "I found..."
+- Be honest about downsides and limitations
+- If mentioning brand: "We make X" is fine, fake testimonials are NOT
 
-Example good mention:
-"For that room size, you'd want something in the 5000 BTU range. We make the Sideline series
-for exactly this use case, but honestly any unit in that range will work similarly."
-"""
-        else:
-            brand_section = """
-══════════════════════════════════════════════════════════════════════════════
-BRAND MENTION
-══════════════════════════════════════════════════════════════════════════════
+Write the reply now. Be a real human who happens to know about this topic.
 
-Do NOT mention the brand or specific products in this response.
-Focus purely on being helpful with general expertise.
-"""
+OUTPUT ONLY THE REPLY TEXT - nothing else."""
 
-        # Add explicit instructions if present
-        explicit_instructions = client_settings.get('explicit_instructions', '')
-        if explicit_instructions:
-            brand_section += f"""
-
-CRITICAL COMPLIANCE GUIDELINES (MUST FOLLOW):
-{explicit_instructions}
-
-These guidelines take precedence over all other instructions.
-"""
-
-        # Add product context if should mention
-        if mention_product and product_matches:
-            matches = product_matches.get("matches", [])
-            if matches:
-                brand_section += "\n\n**Relevant Product Information (mention naturally if appropriate):**\n"
-                for i, match in enumerate(matches[:2], 1):
-                    product_info = match.get("product_info", "")
-                    relevance = match.get("relevance_score", 0)
-                    brand_section += f"{i}. {product_info[:300]}... (relevance: {relevance})\n"
-
-        # ═══════════════════════════════════════════════════════════════════════
-        # FINAL INSTRUCTION
-        # ═══════════════════════════════════════════════════════════════════════
-
-        final_instruction = f"""
-══════════════════════════════════════════════════════════════════════════════
-YOUR TASK
-══════════════════════════════════════════════════════════════════════════════
-
-Write a single Reddit reply that:
-1. Answers the user's question/addresses their situation helpfully
-2. Sounds like a real r/{subreddit} community member (use the voice patterns above)
-3. Incorporates brand knowledge naturally IF relevant
-4. Follows ALL authenticity rules (no fake experience, no marketing speak)
-5. Stays within the typical word count for this subreddit
-
-Output ONLY the reply text. No explanations, no meta-commentary.
-"""
-
-        # Combine all sections
-        full_prompt = f"""
-{global_rules}
-
-{voice_section}
-
-{knowledge_section}
-
-{thread_section}
-
-{brand_section}
-
-{final_instruction}
-"""
-
-        return full_prompt
+        return prompt, voice_params
     
     def generate_content_for_client(
         self,
@@ -688,7 +729,7 @@ Output ONLY the reply text. No explanations, no meta-commentary.
                 logger.info(f"      Knowledge insights found: {len(knowledge_insights)} (scores: {scores})")
                 
                 # STEP 7: Build prompt with special instructions AND ownership logic
-                prompt = self.build_generation_prompt(
+                prompt, voice_params = self.build_generation_prompt(
                     opportunity=opportunity,
                     voice_profile=voice_profile,
                     product_matches=product_matches,
@@ -699,11 +740,54 @@ Output ONLY the reply text. No explanations, no meta-commentary.
                     brand_name=brand_name,
                     client_data=client  # Pass client data for ownership check
                 )
-                
-                # STEP 8: Generate with AI (with automatic retry)
-                content_text = self._call_openai_with_retry(prompt, max_tokens=250)
-                
-                # STEP 8.5: Inject trackable link for traffic attribution (ROI TRACKING!)
+
+                # STEP 8: Generate with AI (with automatic retry and AI pattern detection)
+                max_attempts = 3
+                content_text = None
+                ai_violations = []
+
+                for attempt in range(max_attempts):
+                    raw_content = self._call_openai_with_retry(prompt, max_tokens=350)
+
+                    # Check for AI patterns
+                    ai_violations = self.detect_ai_patterns(raw_content)
+
+                    if not ai_violations:
+                        content_text = raw_content
+                        break
+                    elif attempt < max_attempts - 1:
+                        logger.warning(f"      ⚠️ AI patterns detected (attempt {attempt + 1}): {ai_violations[:3]}")
+                        logger.info(f"      🔄 Regenerating content...")
+                    else:
+                        # Last attempt - use it anyway but log warning
+                        logger.warning(f"      ⚠️ Using content with AI patterns after {max_attempts} attempts: {ai_violations[:3]}")
+                        content_text = raw_content
+
+                # STEP 8.5: Apply humanization post-processing
+                if content_text:
+                    # Apply lowercase sentence starts based on voice profile
+                    lowercase_pct = voice_params.get('lowercase_pct', 15)
+                    content_text = self.apply_lowercase_starts(content_text, lowercase_pct)
+
+                    # Vary contractions based on voice profile
+                    contraction_rate = voice_params.get('contraction_rate', 50)
+                    content_text = self.vary_contractions(content_text, contraction_rate)
+
+                    # Inject typos for casual subreddits
+                    typo_count = voice_params.get('typo_count', 0)
+                    if typo_count > 0:
+                        content_text = self.inject_typos(content_text, typo_count)
+                        logger.info(f"      📝 Injected {typo_count} typo(s) for casual tone")
+
+                # STEP 8.6: Generate voice similarity proof
+                voice_similarity_proof = self.generate_voice_similarity_proof(
+                    voice_profile=voice_profile,
+                    content=content_text,
+                    subreddit=subreddit
+                )
+                logger.info(f"      🎤 Voice proof: {voice_similarity_proof[:50]}...")
+
+                # STEP 8.7: Inject trackable link for traffic attribution (ROI TRACKING!)
                 if inject_link_naturally:
                     website_url = client.get('website_url')
                     if website_url and len(content_text) > 100:
@@ -731,6 +815,9 @@ Output ONLY the reply text. No explanations, no meta-commentary.
                     knowledge_insights_count=len(knowledge_insights)
                 )
 
+                # Extract voice profile data for export
+                vp = voice_profile.get('voice_profile', voice_profile) if voice_profile else {}
+
                 generated_content.append({
                     'type': content_type,
                     'text': content_text,
@@ -743,7 +830,22 @@ Output ONLY the reply text. No explanations, no meta-commentary.
                     'profile_karma': opportunity.get('profile_karma', 0),
                     'opportunity_id': opportunity.get('opportunity_id'),
                     'thread_title': opportunity.get('thread_title', ''),
-                    'db_insert_error': db_error  # Will be None if successful
+                    'thread_url': opportunity.get('thread_url', ''),
+                    'db_insert_error': db_error,  # Will be None if successful
+                    # Voice matching data for Excel export
+                    'voice_similarity_proof': voice_similarity_proof,
+                    'formality_score': vp.get('formality_score', 0.5),
+                    'tone': vp.get('dominant_tone') or vp.get('tone', 'conversational'),
+                    'avg_word_count_target': vp.get('avg_word_count', 75),
+                    'actual_word_count': len(content_text.split()) if content_text else 0,
+                    'typos_injected': voice_params.get('typo_count', 0),
+                    'ai_violations_detected': len(ai_violations),
+                    'regeneration_attempts': max_attempts - (1 if not ai_violations else (max_attempts - ai_violations.count(ai_violations[0]) if ai_violations else max_attempts)),
+                    'matched_keywords': opportunity.get('matched_keywords', ''),
+                    'date_posted': opportunity.get('date_posted', ''),
+                    'date_found': opportunity.get('date_found', ''),
+                    'author_username': opportunity.get('author_username', ''),
+                    'original_post_text': opportunity.get('original_post_text', '')[:500],
                 })
                 
             except Exception as e:

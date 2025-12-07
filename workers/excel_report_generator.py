@@ -1,14 +1,14 @@
 """
-Excel Weekly Report Generator
+Excel Weekly Report Generator v2.0
 
 Replaces HTML email reports with Excel workbooks.
 Generates 25-piece content queues every Monday & Thursday at 7am EST.
 
-Format matches client expectations:
-- 26 columns (Opportunity ID through Notes)
-- Urgency color coding
-- Content Preview + Full Copy/Paste Ready text
-- Product matchback in Notes column
+NEW FORMAT (30-31 columns, A through AD):
+- Voice matching columns (formality, tone, similarity proof)
+- Anti-AI detection tracking
+- Full opportunity and content metadata
+- Product matchback and knowledge base usage
 """
 
 import os
@@ -133,15 +133,39 @@ class ExcelReportGenerator:
             bottom=Side(style='thin', color='D3D3D3')
         )
         
-        # Define headers (26 columns)
+        # Define headers (30 columns: A through AD)
+        # User-specified format for anti-AI voice-matched content
         headers = [
-            "Opportunity ID", "Rank", "Priority Tier", "Timing", "Urgency",
-            "Content Type", "Subreddit", "Thread Title", "Thread URL", "Target User",
-            "User Commercial Score", "User Authority Score", "Thread Score", "User Score",
-            "Combined Opportunity Score", "Approach Strategy", "Content Preview",
-            "Full Content (Copy/Paste Ready)", "Content Status", "Post Window Start",
-            "Post Window End", "Thread Upvotes", "Thread Comments",
-            "Engagement Probability", "Conversion Potential", "Notes"
+            "Opportunity ID",           # A
+            "Subreddit",                # B
+            "Thread URL",               # C
+            "Thread Title",             # D
+            "Original Post",            # E
+            "Author Username",          # F
+            "Date Posted",              # G
+            "Date Found",               # H
+            "Matched Keywords",         # I
+            "Urgency",                  # J
+            "Content Type",             # K
+            "Generated Reply",          # L (THE CONTENT - ready to copy/paste)
+            "Word Count",               # M
+            "Voice Formality Score",    # N
+            "Voice Tone",               # O
+            "Voice Similarity Proof",   # P
+            "Typos Injected",           # Q
+            "AI Violations Detected",   # R
+            "Regeneration Attempts",    # S
+            "Brand Mentioned",          # T
+            "Product Mentioned",        # U
+            "Product Similarity",       # V
+            "Knowledge Base Used",      # W
+            "Knowledge Excerpts",       # X
+            "Assigned Profile",         # Y
+            "Profile Karma",            # Z
+            "Combined Score",           # AA
+            "Content Status",           # AB
+            "Notes",                    # AC
+            "Posting Account",          # AD
         ]
         
         # Add headers
@@ -153,8 +177,39 @@ class ExcelReportGenerator:
             cell.border = border
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         
-        # Set column widths
-        column_widths = [15, 6, 16, 14, 10, 16, 14, 40, 50, 18, 12, 12, 11, 10, 15, 25, 80, 120, 14, 18, 18, 12, 12, 14, 14, 60]
+        # Set column widths (30 columns)
+        column_widths = [
+            15,   # A: Opportunity ID
+            14,   # B: Subreddit
+            50,   # C: Thread URL
+            50,   # D: Thread Title
+            60,   # E: Original Post
+            16,   # F: Author Username
+            18,   # G: Date Posted
+            18,   # H: Date Found
+            25,   # I: Matched Keywords
+            12,   # J: Urgency
+            14,   # K: Content Type
+            120,  # L: Generated Reply (wide for copy/paste)
+            10,   # M: Word Count
+            14,   # N: Voice Formality Score
+            20,   # O: Voice Tone
+            50,   # P: Voice Similarity Proof
+            10,   # Q: Typos Injected
+            14,   # R: AI Violations Detected
+            14,   # S: Regeneration Attempts
+            12,   # T: Brand Mentioned
+            12,   # U: Product Mentioned
+            12,   # V: Product Similarity
+            14,   # W: Knowledge Base Used
+            50,   # X: Knowledge Excerpts
+            18,   # Y: Assigned Profile
+            10,   # Z: Profile Karma
+            12,   # AA: Combined Score
+            14,   # AB: Content Status
+            40,   # AC: Notes
+            18,   # AD: Posting Account
+        ]
         for idx, width in enumerate(column_widths, 1):
             ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
         
@@ -163,52 +218,67 @@ class ExcelReportGenerator:
             opp = item['opportunity']
             content = item['content']
             rank = item['rank']
-            
-            # Determine tier and urgency
-            tier = self._get_priority_tier(opp.get('combined_score', 0))
-            timing = self._get_timing_category(opp.get('created_at'))
+
+            # Determine urgency
+            timing = self._get_timing_category(opp.get('created_at') or opp.get('date_found'))
             urgency = self._get_urgency_emoji(opp.get('combined_score', 0), timing)
-            
-            # Build row data
+
+            # Extract matched keywords (may be JSON string or list)
+            matched_keywords = opp.get('matched_keywords', '')
+            if isinstance(matched_keywords, list):
+                matched_keywords = ', '.join(matched_keywords)
+            elif matched_keywords and matched_keywords.startswith('['):
+                try:
+                    import json
+                    matched_keywords = ', '.join(json.loads(matched_keywords))
+                except:
+                    pass
+
+            # Build row data (30 columns: A through AD)
             row_data = [
-                opp.get('id', '')[:15],  # Opportunity ID (truncated)
-                rank,
-                tier,
-                timing,
-                urgency,
-                "COMMENT/REPLY",
-                opp.get('subreddit', ''),
-                opp.get('thread_title', ''),
-                opp.get('thread_url', ''),
-                opp.get('target_user', ''),
-                round(opp.get('commercial_intent_score', 0), 2),
-                round(opp.get('authority_score', 0), 2),
-                round(opp.get('thread_score', 0), 2),
-                round(opp.get('user_score', 0), 2),
-                round(opp.get('combined_score', 0), 2),
-                content.get('approach_strategy', 'EDUCATIONAL_WITH_PRODUCT'),
-                content.get('preview', ''),
-                content.get('content', ''),
-                "Ready to Post",
-                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                (datetime.utcnow() + timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
-                opp.get('thread_upvotes', 0),
-                opp.get('thread_comments', 0),
-                round(opp.get('engagement_probability', 0), 2),
-                round(opp.get('conversion_potential', 0), 2),
-                self._build_notes(opp, content, brand_mention_percentage)
+                opp.get('opportunity_id', opp.get('id', ''))[:15],  # A: Opportunity ID
+                opp.get('subreddit', ''),                           # B: Subreddit
+                opp.get('thread_url', ''),                          # C: Thread URL
+                opp.get('thread_title', ''),                        # D: Thread Title
+                (opp.get('original_post_text', '') or '')[:500],    # E: Original Post
+                opp.get('author_username', ''),                     # F: Author Username
+                opp.get('date_posted', ''),                         # G: Date Posted
+                opp.get('date_found', ''),                          # H: Date Found
+                matched_keywords,                                    # I: Matched Keywords
+                urgency,                                             # J: Urgency
+                content.get('type', 'REPLY').upper(),               # K: Content Type
+                content.get('text', content.get('content', '')),    # L: Generated Reply
+                content.get('actual_word_count', len((content.get('text', '') or '').split())),  # M: Word Count
+                round(content.get('formality_score', 0.5), 2),      # N: Voice Formality Score
+                content.get('tone', 'conversational'),               # O: Voice Tone
+                content.get('voice_similarity_proof', ''),           # P: Voice Similarity Proof
+                content.get('typos_injected', 0),                    # Q: Typos Injected
+                content.get('ai_violations_detected', 0),            # R: AI Violations Detected
+                content.get('regeneration_attempts', 1),             # S: Regeneration Attempts
+                'Yes' if content.get('brand_mentioned') else 'No',   # T: Brand Mentioned
+                'Yes' if content.get('product_mentioned') else 'No', # U: Product Mentioned
+                round(opp.get('product_similarity', 0), 2),          # V: Product Similarity
+                content.get('knowledge_insights_used', 0),           # W: Knowledge Base Used
+                '; '.join(content.get('knowledge_excerpts', []))[:200],  # X: Knowledge Excerpts
+                content.get('assigned_profile', ''),                 # Y: Assigned Profile
+                content.get('profile_karma', 0),                     # Z: Profile Karma
+                round(opp.get('combined_score', opp.get('overall_priority', 0)), 2),  # AA: Combined Score
+                "Ready to Post",                                     # AB: Content Status
+                self._build_notes(opp, content, brand_mention_percentage),  # AC: Notes
+                content.get('assigned_profile', ''),                 # AD: Posting Account
             ]
-            
+
             # Write row
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.value = value
                 cell.border = border
-                
-                # Special formatting
-                if col_idx in [17, 18, 26]:  # Wrap text columns
+
+                # Special formatting for specific columns
+                # L (12): Generated Reply, E (5): Original Post, P (16): Voice Proof, X (24): Knowledge
+                if col_idx in [5, 12, 16, 24, 29]:  # Wrap text columns
                     cell.alignment = Alignment(wrap_text=True, vertical='top')
-                elif col_idx == 5:  # Urgency colors
+                elif col_idx == 10:  # J: Urgency colors
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     if "🔴" in str(value):
                         cell.font = Font(color="FF0000", bold=True)
@@ -266,39 +336,44 @@ class ExcelReportGenerator:
             return "🟢 MEDIUM"
     
     def _build_notes(self, opp: Dict, content: Dict, brand_percentage: float) -> str:
-        """Build notes column with metadata"""
+        """Build notes column with metadata for v2.0 format"""
         notes = []
-        
+
         # Priority indicator
-        if opp.get('combined_score', 0) >= 0.8:
+        combined_score = opp.get('combined_score', opp.get('overall_priority', 0))
+        if combined_score >= 80 or (combined_score >= 0.8 and combined_score <= 1):
             notes.append("PLATINUM OPPORTUNITY")
-        elif opp.get('combined_score', 0) >= 0.7:
+        elif combined_score >= 70 or (combined_score >= 0.7 and combined_score <= 1):
             notes.append("HIGH-VALUE")
-        
-        # Brand mention status
-        if content.get('brand_mentioned'):
-            notes.append(f"Brand mentioned (Current setting: {brand_percentage}%)")
+
+        # Voice matching info
+        formality = content.get('formality_score', 0.5)
+        if formality < 0.3:
+            notes.append("Voice: Very Casual")
+        elif formality < 0.5:
+            notes.append("Voice: Casual")
+        elif formality < 0.7:
+            notes.append("Voice: Conversational")
         else:
-            notes.append(f"No brand mention (Current setting: {brand_percentage}%)")
-        
-        # Product match if applicable
-        if content.get('product_matched'):
-            notes.append(f"Product: {content['product_matched']}")
-        
-        # Voice profile
-        if content.get('voice_profile_used'):
-            notes.append(f"Voice: r/{content['voice_profile_used']}")
-        
-        # Quality score
-        if content.get('quality_score'):
-            quality = content['quality_score']
-            if quality >= 0.9:
-                notes.append("✅ Quality: Excellent")
-            elif quality >= 0.7:
-                notes.append("⚠️ Quality: Good")
-            else:
-                notes.append("❌ Quality: Review needed")
-        
+            notes.append("Voice: Semi-formal")
+
+        # AI detection info
+        ai_violations = content.get('ai_violations_detected', 0)
+        if ai_violations == 0:
+            notes.append("AI-Clean")
+        else:
+            notes.append(f"AI-Flagged ({ai_violations} patterns)")
+
+        # Typo injection info
+        typos = content.get('typos_injected', 0)
+        if typos > 0:
+            notes.append(f"{typos} typo(s) added")
+
+        # Knowledge base usage
+        kb_used = content.get('knowledge_insights_used', 0)
+        if kb_used > 0:
+            notes.append(f"KB: {kb_used} insights")
+
         return " | ".join(notes)
 
 
