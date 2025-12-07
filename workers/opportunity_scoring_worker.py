@@ -644,6 +644,7 @@ class OpportunityScoringWorker:
             processed = 0
             excluded = 0
             errors = 0
+            last_error = None
 
             for opp in opportunities.data:
                 try:
@@ -712,10 +713,12 @@ class OpportunityScoringWorker:
                 except Exception as e:
                     logger.error(f"Error scoring opportunity {opp.get('opportunity_id', opp.get('id'))}: {str(e)}")
                     errors += 1
+                    if last_error is None:
+                        last_error = f"{opp.get('opportunity_id', opp.get('id'))}: {str(e)}"
 
             logger.info(f"Scoring complete: {processed} processed, {excluded} excluded, {errors} errors")
 
-            return {
+            result = {
                 "success": True,
                 "processed": processed,
                 "excluded": excluded,
@@ -726,6 +729,9 @@ class OpportunityScoringWorker:
                 "scoring_version": "v3.0_reddit_optimized",
                 "message": f"Processed {processed} opportunities with timing/velocity/intent/relevance scores"
             }
+            if last_error:
+                result["sample_error"] = last_error
+            return result
 
         except Exception as e:
             logger.error(f"Error in opportunity scoring process: {str(e)}")
