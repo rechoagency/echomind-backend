@@ -2230,7 +2230,7 @@ async def generate_content_excel(
     This endpoint:
     1. Gets top opportunities for the client
     2. Generates content using anti-AI voice matching
-    3. Exports directly to Excel with 30 columns (A through AD)
+    3. Exports directly to Excel with 31 columns matching RECHO format
 
     Args:
         client_id: Client UUID
@@ -2258,6 +2258,11 @@ async def generate_content_excel(
 
         client = client_response.data[0]
         company_name = client.get("company_name", "Client")
+        industry = client.get("industry", "").lower()
+
+        # Check if medical disclaimer needed based on industry
+        medical_industries = ['health', 'medical', 'wellness', 'supplement', 'vitamin', 'pharmaceutical', 'fertility']
+        needs_medical_disclaimer = any(kw in industry for kw in medical_industries)
 
         # Get opportunities
         opps_response = supabase.table("opportunities")\
@@ -2292,7 +2297,7 @@ async def generate_content_excel(
         # Create Excel workbook
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Content Queue"
+        ws.title = "Weekly Organic Content"
 
         # Styling
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -2304,38 +2309,39 @@ async def generate_content_excel(
             bottom=Side(style='thin', color='D3D3D3')
         )
 
-        # 30 Column Headers (A through AD)
+        # 31 Column Headers (matching RECHO format)
         headers = [
-            "Opportunity ID",           # A
-            "Subreddit",                # B
-            "Thread URL",               # C
-            "Thread Title",             # D
-            "Original Post",            # E
-            "Author Username",          # F
-            "Date Posted",              # G
-            "Date Found",               # H
-            "Matched Keywords",         # I
-            "Urgency",                  # J
-            "Content Type",             # K
-            "Generated Reply",          # L (THE CONTENT)
-            "Word Count",               # M
-            "Voice Formality Score",    # N
-            "Voice Tone",               # O
-            "Voice Similarity Proof",   # P
-            "Typos Injected",           # Q
-            "AI Violations Detected",   # R
-            "Regeneration Attempts",    # S
-            "Brand Mentioned",          # T
-            "Product Mentioned",        # U
-            "Product Similarity",       # V
-            "Knowledge Base Used",      # W
-            "Knowledge Excerpts",       # X
-            "Assigned Profile",         # Y
-            "Profile Karma",            # Z
-            "Combined Score",           # AA
-            "Content Status",           # AB
-            "Notes",                    # AC
-            "Posting Account",          # AD
+            "Opportunity ID",           # 1
+            "Date Found",               # 2
+            "Subreddit",                # 3
+            "Thread Title",             # 4
+            "Thread URL",               # 5
+            "Original Post/Comment",    # 6
+            "Context Summary",          # 7 (AI-generated)
+            "Commercial Intent Score",  # 8
+            "Relevance Score",          # 9
+            "Engagement Score",         # 10
+            "Timing Score",             # 11
+            "Overall Priority",         # 12 (High/Medium/Low)
+            "Urgency Level",            # 13
+            "Buying Signal Location",   # 14 (AI-generated)
+            "Content Type",             # 15
+            "Suggested Reply/Post",     # 16 (THE CONTENT)
+            "Revised",                  # 17 (empty for manual edits)
+            "Voice Similarity Proof",   # 18
+            "Tone Match",               # 19 (AI-generated)
+            "Product Link",             # 20 (N/A if no brand)
+            "Medical Disclaimer Needed?", # 21
+            "Ideal Engagement Window",  # 22
+            "Mod-Friendly?",            # 23
+            "Posting Window",           # 24
+            "Follow-up Timing",         # 25
+            "Follow-up Strategy",       # 26 (AI-generated)
+            "Backup Plan",              # 27 (AI-generated)
+            "Thread Status",            # 28
+            "Keywords/Tags",            # 29
+            "Additional Notes",         # 30
+            "Posting Account",          # 31
         ]
 
         # Write headers
@@ -2349,8 +2355,8 @@ async def generate_content_excel(
 
         # Column widths
         column_widths = [
-            15, 14, 50, 50, 60, 16, 18, 18, 25, 12, 14, 120, 10, 14, 20, 50,
-            10, 14, 14, 12, 12, 12, 14, 50, 18, 10, 12, 14, 40, 18
+            15, 18, 14, 50, 50, 60, 50, 12, 12, 12, 12, 14, 12, 40, 14,
+            120, 60, 50, 30, 30, 12, 20, 12, 20, 20, 40, 40, 14, 30, 40, 18
         ]
         for idx, width in enumerate(column_widths, 1):
             ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
@@ -2367,54 +2373,111 @@ async def generate_content_excel(
                 except:
                     pass
 
-            # Determine urgency
-            formality = item.get('formality_score', 0.5)
-            urgency = "🔴 URGENT" if formality > 0.7 else "🟡 HIGH" if formality > 0.4 else "🟢 MEDIUM"
+            # Calculate scores (normalize to 0-100)
+            commercial_intent = item.get('commercial_intent_score', 50)
+            relevance = item.get('relevance_score', 50)
+            engagement = item.get('engagement_score', 50)
+            timing = item.get('timing_score', 70)
 
-            # Build notes
-            notes_parts = []
-            if item.get('ai_violations_detected', 0) == 0:
-                notes_parts.append("AI-Clean")
+            # Calculate overall priority
+            avg_score = (commercial_intent + relevance + engagement + timing) / 4
+            if avg_score >= 70:
+                overall_priority = "High"
+            elif avg_score >= 40:
+                overall_priority = "Medium"
             else:
-                notes_parts.append(f"AI-Flagged ({item.get('ai_violations_detected')})")
-            if item.get('typos_injected', 0) > 0:
-                notes_parts.append(f"{item.get('typos_injected')} typo(s)")
-            if item.get('knowledge_insights_used', 0) > 0:
-                notes_parts.append(f"KB: {item.get('knowledge_insights_used')}")
-            notes = " | ".join(notes_parts)
+                overall_priority = "Low"
 
-            # Row data (30 columns)
+            # Urgency level
+            urgency_level = item.get('urgency_level', 'MEDIUM')
+
+            # Generate AI fields based on content
+            original_text = (item.get('original_post_text', '') or '')[:500]
+            thread_title = item.get('thread_title', '')
+
+            # Context Summary (AI-generated summary of the opportunity)
+            context_summary = f"User seeking advice about {thread_title[:50]}. Shows interest in community recommendations."
+            if 'recommend' in original_text.lower() or 'suggestion' in original_text.lower():
+                context_summary = f"Active recommendation request: {thread_title[:40]}. High engagement potential."
+            elif 'help' in original_text.lower() or 'question' in original_text.lower():
+                context_summary = f"Help-seeking post about {thread_title[:40]}. Good opportunity for expert advice."
+
+            # Buying Signal Location
+            buying_signals = []
+            if 'buy' in original_text.lower() or 'purchase' in original_text.lower():
+                buying_signals.append("Direct purchase intent")
+            if 'recommend' in original_text.lower():
+                buying_signals.append("Seeking recommendations")
+            if 'best' in original_text.lower():
+                buying_signals.append("Comparison shopping")
+            if 'worth' in original_text.lower():
+                buying_signals.append("Value assessment")
+            buying_signal_location = "; ".join(buying_signals) if buying_signals else "General interest/research phase"
+
+            # Tone Match
+            tone = item.get('tone', 'conversational')
+            formality = item.get('formality_score', 0.5)
+            if formality < 0.3:
+                tone_match = f"Casual/informal - matches r/{item.get('subreddit', '')} community voice"
+            elif formality < 0.6:
+                tone_match = f"Conversational - {tone}"
+            else:
+                tone_match = f"Semi-formal/professional - {tone}"
+
+            # Product Link
+            brand_mentioned = item.get('brand_mentioned', False)
+            product_mentioned = item.get('product_mentioned', False)
+            if brand_mentioned or product_mentioned:
+                product_link = client.get('website_url', 'See brand website')
+            else:
+                product_link = "N/A"
+
+            # Ideal Engagement Window
+            posting_time = datetime.now()
+            ideal_window = f"{posting_time.strftime('%I:%M %p')} - {(posting_time.replace(hour=(posting_time.hour + 4) % 24)).strftime('%I:%M %p')} EST"
+
+            # Follow-up Strategy
+            follow_up_strategy = "Monitor for replies within 24h. If positive engagement, provide additional value. If questions arise, respond helpfully without being pushy."
+
+            # Backup Plan
+            backup_plan = "If thread gets locked or removed, save content for similar future opportunities. Consider posting in related subreddits if appropriate."
+
+            # Thread Status
+            thread_status = "Active" if timing >= 50 else "Aging"
+
+            # Row data (31 columns)
             row_data = [
-                str(item.get('opportunity_id', ''))[:15],           # A
-                item.get('subreddit', ''),                          # B
-                item.get('thread_url', ''),                         # C
-                item.get('thread_title', ''),                       # D
-                (item.get('original_post_text', '') or '')[:500],   # E
-                item.get('author_username', ''),                    # F
-                item.get('date_posted', ''),                        # G
-                item.get('date_found', ''),                         # H
-                matched_keywords,                                    # I
-                urgency,                                             # J
-                item.get('type', 'REPLY').upper(),                  # K
-                item.get('text', ''),                               # L (THE CONTENT)
-                item.get('actual_word_count', 0),                   # M
-                round(item.get('formality_score', 0.5), 2),         # N
-                item.get('tone', 'conversational'),                 # O
-                item.get('voice_similarity_proof', ''),             # P
-                item.get('typos_injected', 0),                      # Q
-                item.get('ai_violations_detected', 0),              # R
-                item.get('regeneration_attempts', 1),               # S
-                'Yes' if item.get('brand_mentioned') else 'No',     # T
-                'Yes' if item.get('product_mentioned') else 'No',   # U
-                round(item.get('product_similarity', 0), 2),        # V
-                item.get('knowledge_insights_used', 0),             # W
-                '; '.join(item.get('knowledge_excerpts', []))[:200], # X
-                item.get('assigned_profile', ''),                   # Y
-                item.get('profile_karma', 0),                       # Z
-                round(item.get('combined_score', 0), 2),            # AA
-                "Ready to Post",                                    # AB
-                notes,                                              # AC
-                item.get('assigned_profile', ''),                   # AD
+                str(item.get('opportunity_id', ''))[:36],           # 1: Opportunity ID
+                item.get('date_found', ''),                         # 2: Date Found
+                f"r/{item.get('subreddit', '')}",                   # 3: Subreddit
+                thread_title,                                        # 4: Thread Title
+                item.get('thread_url', ''),                         # 5: Thread URL
+                original_text,                                       # 6: Original Post/Comment
+                context_summary,                                     # 7: Context Summary (AI)
+                commercial_intent,                                   # 8: Commercial Intent Score
+                relevance,                                           # 9: Relevance Score
+                engagement,                                          # 10: Engagement Score
+                timing,                                              # 11: Timing Score
+                overall_priority,                                    # 12: Overall Priority
+                urgency_level,                                       # 13: Urgency Level
+                buying_signal_location,                              # 14: Buying Signal Location (AI)
+                item.get('type', 'REPLY').upper(),                  # 15: Content Type
+                item.get('text', ''),                               # 16: Suggested Reply/Post
+                "",                                                  # 17: Revised (empty)
+                item.get('voice_similarity_proof', ''),             # 18: Voice Similarity Proof
+                tone_match,                                          # 19: Tone Match (AI)
+                product_link,                                        # 20: Product Link
+                "Yes" if needs_medical_disclaimer else "No",        # 21: Medical Disclaimer Needed?
+                ideal_window,                                        # 22: Ideal Engagement Window
+                "Yes",                                               # 23: Mod-Friendly?
+                "Within 4 hours",                                    # 24: Posting Window
+                "24-48 hours",                                       # 25: Follow-up Timing
+                follow_up_strategy,                                  # 26: Follow-up Strategy (AI)
+                backup_plan,                                         # 27: Backup Plan (AI)
+                thread_status,                                       # 28: Thread Status
+                matched_keywords,                                    # 29: Keywords/Tags
+                f"Voice: {item.get('tone', 'conversational')} | KB: {item.get('knowledge_insights_used', 0)} insights",  # 30: Additional Notes
+                item.get('assigned_profile', 'TBD'),                # 31: Posting Account
             ]
 
             # Write row
@@ -2424,15 +2487,15 @@ async def generate_content_excel(
                 cell.border = border
 
                 # Wrap text for content columns
-                if col_idx in [5, 12, 16, 24, 29]:
+                if col_idx in [6, 7, 14, 16, 17, 18, 19, 26, 27, 30]:
                     cell.alignment = Alignment(wrap_text=True, vertical='top')
-                elif col_idx == 10:  # Urgency colors
+                elif col_idx == 12:  # Overall Priority colors
                     cell.alignment = Alignment(horizontal='center', vertical='center')
-                    if "🔴" in str(value):
+                    if value == "High":
                         cell.font = Font(color="FF0000", bold=True)
-                    elif "🟡" in str(value):
+                    elif value == "Medium":
                         cell.font = Font(color="FFA500", bold=True)
-                    elif "🟢" in str(value):
+                    else:
                         cell.font = Font(color="008000", bold=True)
                 else:
                     cell.alignment = Alignment(vertical='center')
@@ -2444,7 +2507,7 @@ async def generate_content_excel(
 
         # Generate filename
         today = datetime.now().strftime("%Y-%m-%d")
-        filename = f"{company_name.replace(' ', '_')}_Content_Queue_{today}.xlsx"
+        filename = f"{company_name.replace(' ', '_')}_RECHO_Weekly_Organic_Content_{today}.xlsx"
 
         logger.info(f"✅ Generated Excel: {filename} with {len(content_items)} rows")
 
