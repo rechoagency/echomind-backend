@@ -2593,9 +2593,9 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
     supabase = get_supabase_client()
 
     try:
-        # Get opportunities - just scoring columns
+        # Get all columns to see what's available
         all_opps = supabase.table("opportunities")\
-            .select("opportunity_id, thread_title, subreddit, commercial_intent_score, relevance_score, engagement_score, composite_score, priority_tier, updated_at")\
+            .select("*")\
             .eq("client_id", client_id)\
             .order("updated_at", desc=True)\
             .limit(limit)\
@@ -2605,13 +2605,29 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         scored = [o for o in (all_opps.data or []) if o.get('composite_score') is not None]
         unscored = [o for o in (all_opps.data or []) if o.get('composite_score') is None]
 
+        # Get column names from first result
+        columns = list(all_opps.data[0].keys()) if all_opps.data else []
+
+        # Extract just scoring columns for display
+        scoring_fields = ['commercial_intent_score', 'relevance_score', 'engagement_score',
+                          'composite_score', 'priority_tier', 'opportunity_score']
+        sample_scores = []
+        for opp in (all_opps.data or [])[:3]:
+            sample_scores.append({
+                'opportunity_id': opp.get('opportunity_id'),
+                'thread_title': (opp.get('thread_title') or '')[:50],
+                'scores': {k: opp.get(k) for k in scoring_fields if k in columns}
+            })
+
         return {
             "client_id": client_id,
             "total_returned": len(all_opps.data or []),
             "scored_in_sample": len(scored),
             "unscored_in_sample": len(unscored),
-            "sample_opportunities": all_opps.data
+            "available_columns": columns,
+            "sample_scores": sample_scores
         }
     except Exception as e:
         logger.error(f"Debug endpoint error: {e}")
-        return {"error": str(e)}
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
