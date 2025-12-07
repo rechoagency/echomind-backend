@@ -2593,9 +2593,9 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
     supabase = get_supabase_client()
 
     try:
-        # Get opportunities with full scoring debug info
+        # Get opportunities - just scoring columns
         all_opps = supabase.table("opportunities")\
-            .select("opportunity_id, thread_title, subreddit, comment_count, commercial_intent_score, relevance_score, engagement_score, composite_score, priority_tier, scoring_debug, updated_at")\
+            .select("opportunity_id, thread_title, subreddit, commercial_intent_score, relevance_score, engagement_score, composite_score, priority_tier, updated_at")\
             .eq("client_id", client_id)\
             .order("updated_at", desc=True)\
             .limit(limit)\
@@ -2605,25 +2605,11 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         scored = [o for o in (all_opps.data or []) if o.get('composite_score') is not None]
         unscored = [o for o in (all_opps.data or []) if o.get('composite_score') is None]
 
-        # Analyze quality filter results if scoring_debug is available
-        passes_quality = 0
-        fails_quality = 0
-        for o in scored:
-            debug = o.get('scoring_debug', {}) or {}
-            if debug.get('passes_minimum_quality', True):
-                passes_quality += 1
-            else:
-                fails_quality += 1
-
         return {
             "client_id": client_id,
             "total_returned": len(all_opps.data or []),
             "scored_in_sample": len(scored),
             "unscored_in_sample": len(unscored),
-            "quality_filter_stats": {
-                "passes_quality": passes_quality,
-                "fails_quality": fails_quality
-            },
             "sample_opportunities": all_opps.data
         }
     except Exception as e:
