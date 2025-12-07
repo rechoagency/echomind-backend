@@ -391,6 +391,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to load documents router: {str(e)}")
 
+try:
+    from routers.migration_router import router as migration_router
+    app.include_router(migration_router, prefix="/api", tags=["migrations"])
+    logger.info("✅ Loaded: Migration Router")
+except Exception as e:
+    logger.error(f"❌ Failed to load migration router: {str(e)}")
+
 # Option B Router (Brand Monitoring, Workers)
 try:
     from routers.option_b_router import router as option_b_router
