@@ -1,22 +1,37 @@
 """
-Opportunity Scoring Worker v2.0
-Analyzes discovered opportunities with FOUR separate scores:
-1. relevance_score - Brand relevance (keyword/embedding match)
-2. commercial_intent_score - Buying/decision intent
-3. engagement_score - Thread activity potential
-4. user_quality_score - Poster/commenter karma and account quality
+Opportunity Scoring Worker v3.0 - Reddit Timing Optimized
 
-Plus configurable weighted composite_score.
+REDDIT REALITY: Old threads are dead. Timing is EVERYTHING.
 
-MINIMUM FILTERS (threads that fail are marked LOW priority):
-- comment_count >= 5 (no dead threads)
-- upvotes >= 3 (shows interest)
-- thread_age < 7 days (still active)
+SCORING FORMULA (4 components):
+1. TIMING SCORE (30%) - Freshness is king on Reddit
+   - 2-12 hours: 100 points (PEAK - rising, max visibility)
+   - 12-24 hours: 80 points
+   - 24-48 hours: 50 points
+   - 48-72 hours: 20 points
+   - 72+ hours: 0 points
+   - 7+ days: EXCLUDED entirely
+
+2. VELOCITY SCORE (25%) - Activity rate matters more than totals
+   - comments_per_hour and upvotes_per_hour
+   - High velocity = rising thread = more visibility
+
+3. COMMERCIAL INTENT (25%) - Buying signals
+   - "looking for", "recommend", "budget", "best", "purchase"
+   - Price mentions, comparison requests
+
+4. RELEVANCE (20%) - Brand fit
+   - Keyword matches
+   - Target subreddit match
+
+MINIMUM FILTERS (exclude if ANY fail):
+- thread_age < 7 days (archived = invisible)
+- comment_count >= 3 (shows actual engagement)
+- thread not locked/removed
 """
 
 import os
 import logging
-import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from supabase import create_client, Client
@@ -33,27 +48,27 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 class OpportunityScoringWorker:
     """
-    Worker that analyzes opportunities with FOUR separate scores.
-    Includes minimum quality filters to skip dead/low-value threads.
+    Reddit-optimized opportunity scoring.
+    Timing and velocity are weighted heavily because Reddit is real-time.
     """
 
     # ========================================
-    # MINIMUM QUALITY THRESHOLDS
-    # Threads below these are marked LOW priority
+    # MINIMUM FILTERS - Exclude if ANY fail
     # ========================================
-    MIN_COMMENTS = 5          # Skip threads with < 5 comments
-    MIN_UPVOTES = 3           # Skip threads with < 3 upvotes
-    MAX_THREAD_AGE_DAYS = 7   # Skip threads older than 7 days
+    MIN_COMMENTS = 3              # At least 3 comments shows engagement
+    MAX_THREAD_AGE_DAYS = 7       # 7+ days = archived/invisible on Reddit
 
-    # Default scoring weights (can be overridden per brand)
+    # ========================================
+    # SCORING WEIGHTS - Reddit optimized
+    # ========================================
     DEFAULT_WEIGHTS = {
-        'relevance': 0.30,
-        'commercial_intent': 0.35,
-        'engagement': 0.25,
-        'user_quality': 0.10
+        'timing': 0.30,           # Freshness is CRITICAL on Reddit
+        'velocity': 0.25,         # Activity rate > total count
+        'commercial_intent': 0.25,
+        'relevance': 0.20
     }
 
-    # High commercial intent phrases (user is ready to buy/decide)
+    # Commercial intent indicators
     HIGH_INTENT_PHRASES = [
         "looking to buy", "want to purchase", "ready to buy",
         "what should i get", "what should i buy", "which should i get",
@@ -64,38 +79,12 @@ class OpportunityScoringWorker:
         "looking for", "in the market for", "shopping for"
     ]
 
-    # Medium intent phrases (research/comparison phase)
-    MEDIUM_INTENT_PHRASES = [
+    COMPARISON_PHRASES = [
         "vs", "versus", "compared to", "or should i",
-        "anyone tried", "anyone use", "experience with",
-        "thoughts on", "opinions on", "reviews",
-        "how does", "what do you think", "is it good",
-        "which one", "better option", "alternative to"
+        "which one", "better option", "alternative to",
+        "x or y", "a or b"
     ]
 
-    # Low/no intent phrases (already bought, showing off)
-    LOW_INTENT_PHRASES = [
-        "just bought", "i got", "picked up", "finally got",
-        "showing off", "my setup", "my collection",
-        "just installed", "here's my", "check out my"
-    ]
-
-    # Pain point indicators (problem = opportunity)
-    PAIN_POINTS = [
-        "struggling", "problem", "issue", "frustrat", "annoying", "difficult",
-        "terrible", "awful", "hate", "can't stand", "tired of", "fed up",
-        "doesn't work", "failed", "disappointing", "worst", "horrible",
-        "broken", "stopped working", "gave up", "nightmare"
-    ]
-
-    # Urgency indicators
-    URGENCY_WORDS = [
-        "urgent", "asap", "immediately", "now", "today", "soon",
-        "emergency", "desperate", "quickly", "fast", "right now",
-        "need help", "please help", "anyone available"
-    ]
-
-    # Price/budget indicators (high commercial intent)
     PRICE_INDICATORS = [
         "budget", "price", "cost", "afford", "expensive", "cheap",
         "worth the money", "bang for buck", "value for money",
@@ -103,276 +92,247 @@ class OpportunityScoringWorker:
         "price range", "how much", "investment"
     ]
 
+    # Negative indicators (already bought, not buying)
+    LOW_INTENT_PHRASES = [
+        "just bought", "i got", "picked up", "finally got",
+        "showing off", "my setup", "my collection",
+        "just installed", "here's my", "check out my"
+    ]
+
     def __init__(self):
         """Initialize the scoring worker"""
         self.supabase = supabase
-        logger.info("Opportunity Scoring Worker v2.0 initialized (FOUR-SCORE SYSTEM with quality filters)")
+        logger.info("Opportunity Scoring Worker v3.0 initialized (REDDIT TIMING OPTIMIZED)")
 
-    def check_minimum_quality(self, opportunity: Dict) -> Tuple[bool, Dict]:
-        """
-        Check if opportunity meets MINIMUM quality thresholds.
-        Threads that fail are marked LOW priority automatically.
+    def get_thread_age_hours(self, opportunity: Dict) -> Optional[float]:
+        """Calculate thread age in hours"""
+        thread_created = (
+            opportunity.get('thread_created_utc') or
+            opportunity.get('thread_created_at') or
+            opportunity.get('date_posted')
+        )
 
-        Checks:
-        - comment_count >= MIN_COMMENTS (5)
-        - upvotes >= MIN_UPVOTES (3)
-        - thread_age < MAX_THREAD_AGE_DAYS (7)
+        if not thread_created:
+            return None
 
-        Returns:
-            tuple of (passes_quality, reasons_dict)
-        """
-        reasons = {
-            'passes': True,
-            'failures': [],
-            'comment_count': 0,
-            'upvotes': 0,
-            'thread_age_days': None
-        }
-
-        # Check comment count
-        num_comments = opportunity.get('comment_count') or opportunity.get('num_comments', 0)
-        reasons['comment_count'] = num_comments
-        if num_comments < self.MIN_COMMENTS:
-            reasons['passes'] = False
-            reasons['failures'].append(f"comment_count={num_comments} < {self.MIN_COMMENTS}")
-
-        # Check upvotes
-        upvotes = opportunity.get('score', 0) or opportunity.get('upvotes', 0) or opportunity.get('thread_score', 0)
-        reasons['upvotes'] = upvotes
-        if upvotes < self.MIN_UPVOTES:
-            reasons['passes'] = False
-            reasons['failures'].append(f"upvotes={upvotes} < {self.MIN_UPVOTES}")
-
-        # Check thread age
-        thread_created = opportunity.get('thread_created_utc') or opportunity.get('date_posted')
-        if thread_created:
-            try:
-                if isinstance(thread_created, str):
-                    created_dt = datetime.fromisoformat(thread_created.replace('Z', '+00:00'))
-                else:
-                    created_dt = datetime.fromtimestamp(thread_created)
-
-                age_days = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 86400
-                reasons['thread_age_days'] = round(age_days, 2)
-
-                if age_days > self.MAX_THREAD_AGE_DAYS:
-                    reasons['passes'] = False
-                    reasons['failures'].append(f"thread_age={round(age_days,1)} days > {self.MAX_THREAD_AGE_DAYS}")
-            except Exception:
-                pass  # Can't determine age, don't fail on this
-
-        return (reasons['passes'], reasons)
-
-    def calculate_user_quality_score(self, opportunity: Dict) -> Tuple[float, Dict]:
-        """
-        Calculate user quality score (0-100) based on poster and commenter quality.
-
-        Factors:
-        - Original poster karma (link + comment karma)
-        - Original poster account age
-        - Average commenter karma (if available)
-        - Account verification indicators
-
-        Returns:
-            tuple of (score, debug_info)
-        """
-        debug = {
-            'op_karma': 0,
-            'op_karma_score': 0,
-            'op_account_age_days': None,
-            'op_age_score': 0,
-            'avg_commenter_karma': None,
-            'commenter_score': 0
-        }
-        score = 0
-
-        # OP Karma scoring (0-40 points)
-        # Note: Most opportunities may not have this data, so provide reasonable defaults
-        op_karma = opportunity.get('author_karma', 0) or opportunity.get('op_karma', 0)
-        debug['op_karma'] = op_karma
-
-        if op_karma >= 50000:
-            karma_score = 40  # Power user
-        elif op_karma >= 10000:
-            karma_score = 30  # Established user
-        elif op_karma >= 1000:
-            karma_score = 20  # Regular user
-        elif op_karma >= 100:
-            karma_score = 10  # Beginner user
-        else:
-            karma_score = 15  # Unknown/new - give benefit of doubt
-
-        score += karma_score
-        debug['op_karma_score'] = karma_score
-
-        # OP Account Age scoring (0-30 points)
-        op_created = opportunity.get('author_created_utc') or opportunity.get('op_account_age')
-        if op_created:
-            try:
-                if isinstance(op_created, str):
-                    created_dt = datetime.fromisoformat(op_created.replace('Z', '+00:00'))
-                else:
-                    created_dt = datetime.fromtimestamp(op_created)
-
-                age_days = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 86400
-                debug['op_account_age_days'] = round(age_days, 0)
-
-                if age_days >= 365 * 3:  # 3+ years
-                    age_score = 30
-                elif age_days >= 365:  # 1+ year
-                    age_score = 25
-                elif age_days >= 180:  # 6+ months
-                    age_score = 20
-                elif age_days >= 30:  # 1+ month
-                    age_score = 10
-                else:
-                    age_score = 5  # Very new account
-
-                score += age_score
-                debug['op_age_score'] = age_score
-            except Exception:
-                score += 15  # Default if can't parse
-                debug['op_age_score'] = 15
-        else:
-            score += 15  # No data, give middle score
-            debug['op_age_score'] = 15
-
-        # Average commenter karma (0-30 points) - if available
-        avg_commenter_karma = opportunity.get('avg_commenter_karma')
-        if avg_commenter_karma:
-            debug['avg_commenter_karma'] = avg_commenter_karma
-            if avg_commenter_karma >= 10000:
-                commenter_score = 30
-            elif avg_commenter_karma >= 1000:
-                commenter_score = 20
-            elif avg_commenter_karma >= 100:
-                commenter_score = 10
+        try:
+            if isinstance(thread_created, str):
+                created_dt = datetime.fromisoformat(thread_created.replace('Z', '+00:00'))
             else:
-                commenter_score = 5
+                created_dt = datetime.fromtimestamp(thread_created)
 
-            score += commenter_score
-            debug['commenter_score'] = commenter_score
-        else:
-            # No commenter data, give middle score
-            score += 15
-            debug['commenter_score'] = 15
+            age_hours = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 3600
+            return max(0, age_hours)
+        except Exception:
+            return None
 
-        final_score = min(score, 100)
-        debug['final_user_quality_score'] = final_score
-
-        return (final_score, debug)
-
-    def calculate_relevance_score(
-        self,
-        opportunity: Dict,
-        brand_config: Optional[Dict] = None
-    ) -> Tuple[float, Dict]:
+    def should_exclude(self, opportunity: Dict) -> Tuple[bool, str]:
         """
-        Calculate brand relevance score (0-100)
+        Check if opportunity should be EXCLUDED entirely.
 
-        Factors:
-        - Keyword matches (product names, categories, brand terms)
-        - Topic alignment with brand's expertise
-        - Subreddit match (is this a target subreddit?)
-
-        Future: Add embedding similarity for semantic matching
+        Exclusion criteria:
+        - Thread older than 7 days (archived/invisible)
+        - Less than 3 comments (dead thread)
+        - Thread is locked/removed
 
         Returns:
-            tuple of (score, debug_info)
+            (should_exclude, reason)
+        """
+        # Check thread age - 7+ days = EXCLUDE
+        age_hours = self.get_thread_age_hours(opportunity)
+        if age_hours is not None and age_hours > (self.MAX_THREAD_AGE_DAYS * 24):
+            return (True, f"Thread is {round(age_hours/24, 1)} days old (max {self.MAX_THREAD_AGE_DAYS} days)")
+
+        # Check minimum comments
+        num_comments = (
+            opportunity.get('comment_count') or
+            opportunity.get('num_comments') or
+            opportunity.get('thread_num_comments', 0)
+        )
+        if num_comments < self.MIN_COMMENTS:
+            return (True, f"Only {num_comments} comments (min {self.MIN_COMMENTS})")
+
+        # Check if locked/removed (if we have that data)
+        if opportunity.get('is_locked') or opportunity.get('removed'):
+            return (True, "Thread is locked or removed")
+
+        return (False, "")
+
+    def calculate_timing_score(self, opportunity: Dict) -> Tuple[float, Dict]:
+        """
+        Calculate timing score (0-100).
+
+        Reddit timing reality:
+        - 2-12 hours: 100 (PEAK - rising, max visibility)
+        - 12-24 hours: 80 (still good)
+        - 24-48 hours: 50 (okay)
+        - 48-72 hours: 20 (getting stale)
+        - 72+ hours: 0 (dead)
+
+        Returns:
+            (score, debug_info)
         """
         debug = {
-            'keywords_matched': [],
-            'topic_alignment': 0,
-            'subreddit_bonus': 0
-        }
-        score = 0
-
-        thread_title = opportunity.get("thread_title", "")
-        thread_content = opportunity.get("original_post_text") or opportunity.get("thread_content", "")
-        full_text = f"{thread_title} {thread_content}".lower()
-        subreddit = opportunity.get("subreddit", "").lower()
-
-        # Get brand keywords from config or client data
-        brand_keywords = []
-        target_subreddits = []
-
-        if brand_config:
-            brand_keywords = brand_config.get('target_keywords', []) or []
-            target_subreddits = [s.lower() for s in (brand_config.get('target_subreddits', []) or [])]
-            # Add product names, categories, etc.
-            brand_keywords.extend(brand_config.get('product_keywords', []) or [])
-            brand_keywords.extend(brand_config.get('industry_keywords', []) or [])
-
-        # Keyword matching (each match = 15 points, max 60)
-        for keyword in brand_keywords:
-            keyword_lower = keyword.lower()
-            if keyword_lower in full_text:
-                score += 15
-                debug['keywords_matched'].append(keyword)
-                if len(debug['keywords_matched']) >= 4:
-                    break
-
-        # Cap keyword score at 60
-        score = min(score, 60)
-        debug['keyword_score'] = score
-
-        # Subreddit match bonus (25 points if in target subreddit)
-        if subreddit in target_subreddits:
-            score += 25
-            debug['subreddit_bonus'] = 25
-
-        # Topic alignment (basic - check for industry-related terms)
-        # This is a simplified version - could be enhanced with embeddings
-        industry_terms = {
-            'home_improvement': ['install', 'diy', 'project', 'renovation', 'remodel', 'fix', 'repair'],
-            'fireplace': ['fireplace', 'heating', 'warm', 'flames', 'mantel', 'insert', 'electric'],
-            'furniture': ['mount', 'stand', 'lift', 'cabinet', 'entertainment', 'media'],
-            'general': ['help', 'advice', 'recommend', 'suggest', 'looking for']
+            'thread_age_hours': None,
+            'thread_age_category': 'unknown',
+            'timing_score': 0
         }
 
-        topic_score = 0
-        for category, terms in industry_terms.items():
-            matches = sum(1 for term in terms if term in full_text)
-            if matches >= 2:
-                topic_score = max(topic_score, 15)
+        age_hours = self.get_thread_age_hours(opportunity)
 
-        score += topic_score
-        debug['topic_alignment'] = topic_score
+        if age_hours is None:
+            # No age data - give middle score
+            debug['timing_score'] = 50
+            debug['thread_age_category'] = 'unknown'
+            return (50, debug)
 
-        final_score = min(score, 100)
-        debug['final_relevance_score'] = final_score
+        debug['thread_age_hours'] = round(age_hours, 1)
 
-        return (final_score, debug)
+        # Reddit timing scoring
+        if age_hours < 2:
+            # Too new - not enough traction yet
+            score = 70
+            debug['thread_age_category'] = 'very_fresh'
+        elif 2 <= age_hours <= 12:
+            # PEAK - Rising thread, maximum visibility
+            score = 100
+            debug['thread_age_category'] = 'PEAK_RISING'
+        elif 12 < age_hours <= 24:
+            # Still good
+            score = 80
+            debug['thread_age_category'] = 'fresh'
+        elif 24 < age_hours <= 48:
+            # Okay
+            score = 50
+            debug['thread_age_category'] = 'moderate'
+        elif 48 < age_hours <= 72:
+            # Getting stale
+            score = 20
+            debug['thread_age_category'] = 'stale'
+        else:
+            # Dead - but still within 7 day limit
+            score = 0
+            debug['thread_age_category'] = 'old'
+
+        debug['timing_score'] = score
+        return (score, debug)
+
+    def calculate_velocity_score(self, opportunity: Dict) -> Tuple[float, Dict]:
+        """
+        Calculate velocity score (0-100) based on activity RATE.
+
+        Velocity = activity per hour, not totals.
+        A 4-hour old thread with 20 comments is HOT.
+        A 3-day old thread with 20 comments is COLD.
+
+        Returns:
+            (score, debug_info)
+        """
+        debug = {
+            'comments': 0,
+            'upvotes': 0,
+            'age_hours': None,
+            'comments_per_hour': 0,
+            'upvotes_per_hour': 0,
+            'velocity_category': 'unknown'
+        }
+
+        # Get metrics
+        num_comments = (
+            opportunity.get('comment_count') or
+            opportunity.get('num_comments') or
+            opportunity.get('thread_num_comments', 0)
+        )
+        upvotes = (
+            opportunity.get('score', 0) or
+            opportunity.get('upvotes', 0) or
+            opportunity.get('thread_score', 0)
+        )
+
+        debug['comments'] = num_comments
+        debug['upvotes'] = upvotes
+
+        age_hours = self.get_thread_age_hours(opportunity)
+        if age_hours is None or age_hours < 0.5:
+            age_hours = 1  # Minimum 1 hour to avoid division issues
+
+        debug['age_hours'] = round(age_hours, 1)
+
+        # Calculate velocity
+        comments_per_hour = num_comments / age_hours
+        upvotes_per_hour = upvotes / age_hours
+
+        debug['comments_per_hour'] = round(comments_per_hour, 2)
+        debug['upvotes_per_hour'] = round(upvotes_per_hour, 2)
+
+        # Score based on comment velocity (more important than upvotes for engagement)
+        # These thresholds are calibrated for Reddit activity
+        if comments_per_hour >= 10:
+            comment_velocity_score = 60  # Viral thread
+            debug['velocity_category'] = 'VIRAL'
+        elif comments_per_hour >= 5:
+            comment_velocity_score = 50  # Hot thread
+            debug['velocity_category'] = 'hot'
+        elif comments_per_hour >= 2:
+            comment_velocity_score = 40  # Active thread
+            debug['velocity_category'] = 'active'
+        elif comments_per_hour >= 1:
+            comment_velocity_score = 30  # Decent activity
+            debug['velocity_category'] = 'decent'
+        elif comments_per_hour >= 0.5:
+            comment_velocity_score = 20  # Slow but alive
+            debug['velocity_category'] = 'slow'
+        elif comments_per_hour >= 0.2:
+            comment_velocity_score = 10
+            debug['velocity_category'] = 'very_slow'
+        else:
+            comment_velocity_score = 0
+            debug['velocity_category'] = 'dead'
+
+        # Score based on upvote velocity
+        if upvotes_per_hour >= 20:
+            upvote_velocity_score = 40
+        elif upvotes_per_hour >= 10:
+            upvote_velocity_score = 30
+        elif upvotes_per_hour >= 5:
+            upvote_velocity_score = 20
+        elif upvotes_per_hour >= 2:
+            upvote_velocity_score = 15
+        elif upvotes_per_hour >= 1:
+            upvote_velocity_score = 10
+        else:
+            upvote_velocity_score = 5
+
+        # Combined velocity score (comments weighted higher)
+        score = min(100, comment_velocity_score + upvote_velocity_score)
+        debug['velocity_score'] = score
+
+        return (score, debug)
 
     def calculate_commercial_intent_score(self, opportunity: Dict) -> Tuple[float, Dict]:
         """
-        Calculate buying/commercial intent score (0-100)
+        Calculate commercial/buying intent score (0-100).
 
-        Factors:
-        - Buying phrases: "looking to buy", "what should I get", "best X for Y"
-        - Comparison language: "X vs Y", "which is better", "recommendations"
-        - Decision stage: "help me decide", "narrowed down to", "ready to purchase"
-        - Price/budget mentions: "$", "budget", "price range", "how much"
-        - Question indicators: asking for advice vs sharing experience
-        - Pain points: problems that products can solve
+        Signals:
+        - Buying phrases ("looking for", "recommend", "best")
+        - Price mentions ("budget", "$", "how much")
+        - Comparison requests ("X vs Y", "which should I")
+        - Questions (? marks)
 
         Returns:
-            tuple of (score, debug_info)
+            (score, debug_info)
         """
         debug = {
             'high_intent_matches': [],
-            'medium_intent_matches': [],
+            'comparison_matches': [],
+            'price_matches': [],
             'low_intent_matches': [],
-            'price_indicators': [],
-            'pain_points': [],
-            'question_bonus': 0,
-            'urgency_bonus': 0,
-            'price_bonus': 0
+            'question_count': 0
         }
         score = 0
 
         thread_title = opportunity.get("thread_title", "")
-        thread_content = opportunity.get("original_post_text") or opportunity.get("thread_content", "")
+        thread_content = opportunity.get("original_post_text") or opportunity.get("thread_content") or opportunity.get("thread_body", "")
         full_text = f"{thread_title} {thread_content}".lower()
 
         # High intent phrases (+20 each, max 60)
@@ -382,319 +342,208 @@ class OpportunityScoringWorker:
                 debug['high_intent_matches'].append(phrase)
                 if len(debug['high_intent_matches']) >= 3:
                     break
+        score = min(score, 60)
 
-        high_intent_score = min(score, 60)
-        score = high_intent_score
-
-        # Medium intent phrases (+10 each, max 30)
-        medium_score = 0
-        for phrase in self.MEDIUM_INTENT_PHRASES:
+        # Comparison phrases (+15 each, max 30)
+        comparison_score = 0
+        for phrase in self.COMPARISON_PHRASES:
             if phrase in full_text:
-                medium_score += 10
-                debug['medium_intent_matches'].append(phrase)
-                if len(debug['medium_intent_matches']) >= 3:
+                comparison_score += 15
+                debug['comparison_matches'].append(phrase)
+                if len(debug['comparison_matches']) >= 2:
                     break
+        score += min(comparison_score, 30)
 
-        score += min(medium_score, 30)
-
-        # Price/budget indicators (+12 each, max 24) - STRONG buying signal
+        # Price indicators (+15 each, max 30)
         price_score = 0
         for indicator in self.PRICE_INDICATORS:
             if indicator in full_text:
-                price_score += 12
-                debug['price_indicators'].append(indicator)
-                if len(debug['price_indicators']) >= 2:
+                price_score += 15
+                debug['price_matches'].append(indicator)
+                if len(debug['price_matches']) >= 2:
                     break
+        score += min(price_score, 30)
 
-        score += min(price_score, 24)
-        debug['price_bonus'] = min(price_score, 24)
+        # Question bonus (+10 for questions)
+        question_count = full_text.count("?")
+        debug['question_count'] = question_count
+        if question_count >= 1:
+            score += 10
+        if question_count >= 3:
+            score += 10
 
-        # Low/no intent phrases (DEDUCT points)
+        # Low intent penalty (-30 each)
         for phrase in self.LOW_INTENT_PHRASES:
             if phrase in full_text:
-                score -= 25
+                score -= 30
                 debug['low_intent_matches'].append(phrase)
 
-        # Pain point bonus (+8 each, max 24)
-        pain_score = 0
-        for pain in self.PAIN_POINTS:
-            if pain in full_text:
-                pain_score += 8
-                debug['pain_points'].append(pain)
-                if len(debug['pain_points']) >= 3:
-                    break
-
-        score += min(pain_score, 24)
-
-        # Question bonus (questions = seeking advice)
-        question_marks = full_text.count("?")
-        if question_marks >= 1:
-            score += 10
-            debug['question_bonus'] = 10
-        if question_marks >= 3:
-            score += 10
-            debug['question_bonus'] = 20
-
-        # Urgency bonus
-        for word in self.URGENCY_WORDS:
-            if word in full_text:
-                score += 10
-                debug['urgency_bonus'] += 10
-                if debug['urgency_bonus'] >= 20:
-                    break
-
         final_score = max(0, min(score, 100))
-        debug['final_commercial_intent_score'] = final_score
+        debug['commercial_intent_score'] = final_score
 
         return (final_score, debug)
 
-    def calculate_engagement_score(self, opportunity: Dict) -> Tuple[float, Dict]:
+    def calculate_relevance_score(
+        self,
+        opportunity: Dict,
+        brand_config: Optional[Dict] = None
+    ) -> Tuple[float, Dict]:
         """
-        Calculate engagement potential score (0-100)
+        Calculate brand relevance score (0-100).
 
         Factors:
-        - Comment count and activity
-        - Upvote count/score
-        - Thread age (prefer 2-48 hours - not too old, not too new)
-        - Activity ratio (comments per hour - shows thread momentum)
+        - Keyword matches to client products
+        - Subreddit is in client's target list
 
         Returns:
-            tuple of (score, debug_info)
+            (score, debug_info)
         """
         debug = {
-            'comment_score': 0,
-            'upvote_score': 0,
-            'age_score': 0,
-            'activity_ratio': 0,
-            'activity_ratio_score': 0,
-            'activity_indicator': 'unknown'
+            'keywords_matched': [],
+            'subreddit_match': False,
+            'subreddit': ''
         }
         score = 0
 
-        # Comment count scoring (0-35 points)
-        num_comments = opportunity.get('comment_count') or opportunity.get('num_comments', 0)
-        if num_comments >= 50:
-            comment_score = 35
-            debug['activity_indicator'] = 'viral'
-        elif num_comments >= 25:
-            comment_score = 30
-            debug['activity_indicator'] = 'high'
-        elif num_comments >= 15:
-            comment_score = 25
-            debug['activity_indicator'] = 'medium-high'
-        elif num_comments >= 10:
-            comment_score = 20
-            debug['activity_indicator'] = 'medium'
-        elif num_comments >= 5:
-            comment_score = 15
-            debug['activity_indicator'] = 'low-medium'
-        elif num_comments >= 1:
-            comment_score = 5
-            debug['activity_indicator'] = 'low'
-        else:
-            comment_score = 0  # No engagement yet
-            debug['activity_indicator'] = 'dead'
+        thread_title = opportunity.get("thread_title", "")
+        thread_content = opportunity.get("original_post_text") or opportunity.get("thread_content") or opportunity.get("thread_body", "")
+        full_text = f"{thread_title} {thread_content}".lower()
+        subreddit = opportunity.get("subreddit", "").lower().replace("r/", "")
+        debug['subreddit'] = subreddit
 
-        score += comment_score
-        debug['comment_score'] = comment_score
-        debug['num_comments'] = num_comments
+        brand_keywords = []
+        target_subreddits = []
 
-        # Upvote scoring (0-30 points)
-        upvotes = opportunity.get('score', 0) or opportunity.get('upvotes', 0) or opportunity.get('thread_score', 0)
-        if upvotes >= 100:
-            upvote_score = 30
-        elif upvotes >= 50:
-            upvote_score = 25
-        elif upvotes >= 25:
-            upvote_score = 20
-        elif upvotes >= 10:
-            upvote_score = 15
-        elif upvotes >= 5:
-            upvote_score = 10
-        elif upvotes >= 3:
-            upvote_score = 5
-        else:
-            upvote_score = 0  # No social proof
+        if brand_config:
+            brand_keywords = brand_config.get('target_keywords', []) or []
+            target_subreddits = [s.lower().replace("r/", "") for s in (brand_config.get('target_subreddits', []) or [])]
+            brand_keywords.extend(brand_config.get('product_keywords', []) or [])
 
-        score += upvote_score
-        debug['upvote_score'] = upvote_score
-        debug['upvotes'] = upvotes
+        # Keyword matching (+15 each, max 60)
+        for keyword in brand_keywords:
+            keyword_lower = keyword.lower()
+            if keyword_lower in full_text:
+                score += 15
+                debug['keywords_matched'].append(keyword)
+                if len(debug['keywords_matched']) >= 4:
+                    break
+        score = min(score, 60)
 
-        # Thread age scoring (0-20 points)
-        # Prefer threads 2-48 hours old (active but not stale)
-        thread_created = opportunity.get('thread_created_utc') or opportunity.get('date_posted')
-        age_hours = None
-
-        age_score = 10  # Default middle value
-        if thread_created:
-            try:
-                if isinstance(thread_created, str):
-                    created_dt = datetime.fromisoformat(thread_created.replace('Z', '+00:00'))
-                else:
-                    created_dt = datetime.fromtimestamp(thread_created)
-
-                age_hours = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 3600
-
-                if 2 <= age_hours <= 12:
-                    age_score = 20  # Sweet spot - fresh and active
-                elif 12 < age_hours <= 48:
-                    age_score = 15  # Still good
-                elif 48 < age_hours <= 96:  # 2-4 days
-                    age_score = 10  # Getting older
-                elif 96 < age_hours <= 168:  # 4-7 days
-                    age_score = 5  # Old but within limit
-                else:
-                    age_score = 0  # Too old
-
-                debug['thread_age_hours'] = round(age_hours, 1)
-            except Exception:
-                pass
-
-        score += age_score
-        debug['age_score'] = age_score
-
-        # Activity ratio scoring (0-15 points)
-        # Comments per hour shows thread momentum
-        activity_ratio_score = 0
-        if age_hours and age_hours > 0 and num_comments > 0:
-            activity_ratio = num_comments / max(age_hours, 1)  # Prevent division by zero
-            debug['activity_ratio'] = round(activity_ratio, 3)
-
-            if activity_ratio >= 5:  # 5+ comments per hour = viral
-                activity_ratio_score = 15
-            elif activity_ratio >= 2:  # 2-5 cph = hot thread
-                activity_ratio_score = 12
-            elif activity_ratio >= 1:  # 1-2 cph = active
-                activity_ratio_score = 10
-            elif activity_ratio >= 0.5:  # 0.5-1 cph = decent
-                activity_ratio_score = 7
-            elif activity_ratio >= 0.1:  # Slow but active
-                activity_ratio_score = 3
-            else:
-                activity_ratio_score = 0
-
-        score += activity_ratio_score
-        debug['activity_ratio_score'] = activity_ratio_score
+        # Subreddit match bonus (+40 points)
+        if subreddit in target_subreddits:
+            score += 40
+            debug['subreddit_match'] = True
 
         final_score = min(score, 100)
-        debug['final_engagement_score'] = final_score
+        debug['relevance_score'] = final_score
 
         return (final_score, debug)
 
     def calculate_composite_score(
         self,
-        relevance: float,
+        timing: float,
+        velocity: float,
         commercial_intent: float,
-        engagement: float,
-        user_quality: float = 50.0,
+        relevance: float,
         weights: Optional[Dict] = None
     ) -> float:
         """
-        Calculate weighted composite score from the FOUR component scores.
+        Calculate weighted composite score.
 
-        Default weights (can be customized per brand):
-        - relevance: 30%
-        - commercial_intent: 35%
-        - engagement: 25%
-        - user_quality: 10%
-
-        Returns:
-            Composite score (0-100)
+        Weights:
+        - timing: 30%
+        - velocity: 25%
+        - commercial_intent: 25%
+        - relevance: 20%
         """
         if weights is None:
             weights = self.DEFAULT_WEIGHTS
 
         composite = (
-            relevance * weights.get('relevance', 0.30) +
-            commercial_intent * weights.get('commercial_intent', 0.35) +
-            engagement * weights.get('engagement', 0.25) +
-            user_quality * weights.get('user_quality', 0.10)
+            timing * weights.get('timing', 0.30) +
+            velocity * weights.get('velocity', 0.25) +
+            commercial_intent * weights.get('commercial_intent', 0.25) +
+            relevance * weights.get('relevance', 0.20)
         )
 
         return min(round(composite, 2), 100)
 
     def determine_priority(self, composite_score: float) -> str:
         """Determine priority tier from composite score"""
-        if composite_score >= 85:
+        if composite_score >= 80:
             return "URGENT"
-        elif composite_score >= 70:
+        elif composite_score >= 60:
             return "HIGH"
-        elif composite_score >= 50:
+        elif composite_score >= 40:
             return "MEDIUM"
         else:
             return "LOW"
 
-    def score_opportunity(self, opportunity: Dict, brand_config: Optional[Dict] = None) -> Dict:
+    def score_opportunity(self, opportunity: Dict, brand_config: Optional[Dict] = None) -> Optional[Dict]:
         """
-        Score a single opportunity with ALL FOUR scores + quality check.
+        Score a single opportunity with Reddit-optimized scoring.
 
-        Args:
-            opportunity: Dictionary containing opportunity data
-            brand_config: Optional brand configuration for relevance scoring
+        Returns None if opportunity should be EXCLUDED.
 
         Returns:
-            Dictionary with all scores, debug info, and priority
+            Dictionary with all scores, or None if excluded
         """
-        # FIRST: Check minimum quality thresholds
-        passes_quality, quality_reasons = self.check_minimum_quality(opportunity)
+        # Check exclusion first
+        should_exclude, exclude_reason = self.should_exclude(opportunity)
+        if should_exclude:
+            return {
+                "excluded": True,
+                "exclude_reason": exclude_reason,
+                "composite_score": 0,
+                "priority_tier": "EXCLUDED"
+            }
 
         # Calculate all four scores
-        relevance, relevance_debug = self.calculate_relevance_score(opportunity, brand_config)
+        timing, timing_debug = self.calculate_timing_score(opportunity)
+        velocity, velocity_debug = self.calculate_velocity_score(opportunity)
         commercial_intent, intent_debug = self.calculate_commercial_intent_score(opportunity)
-        engagement, engagement_debug = self.calculate_engagement_score(opportunity)
-        user_quality, user_debug = self.calculate_user_quality_score(opportunity)
+        relevance, relevance_debug = self.calculate_relevance_score(opportunity, brand_config)
 
-        # Calculate composite with all four scores
-        composite = self.calculate_composite_score(
-            relevance, commercial_intent, engagement, user_quality
-        )
-
-        # Determine priority - override to LOW if fails quality check
-        if passes_quality:
-            priority = self.determine_priority(composite)
-        else:
-            # Force LOW priority for threads that fail minimum quality
-            priority = "LOW"
-            # Also cap composite score at 40 for these
-            composite = min(composite, 40)
+        # Calculate composite
+        composite = self.calculate_composite_score(timing, velocity, commercial_intent, relevance)
+        priority = self.determine_priority(composite)
 
         # Compile debug info
         scoring_debug = {
-            'quality_check': quality_reasons,
-            'passes_minimum_quality': passes_quality,
-            'relevance': relevance_debug,
+            'version': 'v3.0_reddit_optimized',
+            'timing': timing_debug,
+            'velocity': velocity_debug,
             'commercial_intent': intent_debug,
-            'engagement': engagement_debug,
-            'user_quality': user_debug,
+            'relevance': relevance_debug,
             'weights_used': self.DEFAULT_WEIGHTS,
             'scored_at': datetime.utcnow().isoformat()
         }
 
         return {
             # Individual scores
-            "relevance_score": relevance,
+            "timing_score": timing,
+            "velocity_score": velocity,
             "commercial_intent_score": commercial_intent,
-            "engagement_score": engagement,
-            "user_quality_score": user_quality,
+            "relevance_score": relevance,
 
-            # Quality check
-            "passes_minimum_quality": passes_quality,
+            # For backward compatibility - map to old column names
+            "engagement_score": velocity,  # velocity replaces engagement
 
             # Composite and priority
             "composite_score": composite,
-            "opportunity_score": composite,  # Backward compatibility
+            "opportunity_score": composite,
             "priority": priority,
             "priority_tier": priority,
 
             # Debug info
             "scoring_debug": scoring_debug,
-            "analysis_timestamp": datetime.utcnow().isoformat()
+            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "excluded": False
         }
 
     def get_brand_config(self, client_id: str) -> Optional[Dict]:
         """Get brand configuration for relevance scoring"""
         try:
-            # Get from clients table
             client = self.supabase.table("clients")\
                 .select("target_keywords, target_subreddits, company_name, industry")\
                 .eq("client_id", client_id)\
@@ -703,7 +552,7 @@ class OpportunityScoringWorker:
             if client.data:
                 client_data = client.data[0]
 
-                # Also get keywords from client_keyword_config
+                # Get keywords from client_keyword_config
                 keywords = []
                 try:
                     keyword_config = self.supabase.table("client_keyword_config")\
@@ -742,19 +591,20 @@ class OpportunityScoringWorker:
             logger.error(f"Error getting brand config: {e}")
             return None
 
-    def process_all_opportunities(self, client_id: Optional[str] = None, batch_size: int = 500) -> Dict:
+    def process_all_opportunities(self, client_id: Optional[str] = None, batch_size: int = 500, force_rescore: bool = False) -> Dict:
         """
-        Process opportunities without scores (with batch limits to prevent timeouts)
+        Process opportunities with Reddit-optimized scoring.
 
         Args:
             client_id: Optional client ID to filter by
-            batch_size: Maximum opportunities to process per run (default 500)
+            batch_size: Maximum opportunities to process per run
+            force_rescore: If True, rescore ALL opportunities regardless of existing scores
 
         Returns:
             Dictionary with processing results
         """
         try:
-            logger.info(f"Starting THREE-SCORE opportunity scoring (batch_size={batch_size})...")
+            logger.info(f"Starting Reddit-optimized scoring v3.0 (batch_size={batch_size}, force_rescore={force_rescore})...")
 
             # Get brand config if client specified
             brand_config = None
@@ -763,12 +613,20 @@ class OpportunityScoringWorker:
                 if brand_config:
                     logger.info(f"Loaded brand config for {brand_config.get('company_name')}")
 
-            # Get opportunities without composite scores - prioritize recent
-            query = self.supabase.table("opportunities")\
-                .select("*")\
-                .is_("composite_score", "null")\
-                .order("created_at", desc=True)\
-                .limit(batch_size)
+            # Build query
+            if force_rescore:
+                # Rescore all opportunities for this client
+                query = self.supabase.table("opportunities")\
+                    .select("*")\
+                    .order("created_at", desc=True)\
+                    .limit(batch_size)
+            else:
+                # Only score opportunities without composite scores
+                query = self.supabase.table("opportunities")\
+                    .select("*")\
+                    .is_("composite_score", "null")\
+                    .order("created_at", desc=True)\
+                    .limit(batch_size)
 
             if client_id:
                 query = query.eq("client_id", client_id)
@@ -776,57 +634,49 @@ class OpportunityScoringWorker:
             opportunities = query.execute()
 
             if not opportunities.data:
-                # Try falling back to opportunity_score being null (backward compat)
-                query = self.supabase.table("opportunities")\
-                    .select("*")\
-                    .is_("opportunity_score", "null")\
-                    .order("created_at", desc=True)\
-                    .limit(batch_size)
-
-                if client_id:
-                    query = query.eq("client_id", client_id)
-
-                opportunities = query.execute()
-
-            if not opportunities.data:
                 logger.info("No opportunities to score")
                 return {
                     "success": True,
                     "processed": 0,
+                    "excluded": 0,
                     "message": "No opportunities need scoring"
                 }
 
             logger.info(f"Found {len(opportunities.data)} opportunities to score")
 
             processed = 0
+            excluded = 0
             errors = 0
 
             for opp in opportunities.data:
                 try:
-                    # Get brand config for this opportunity's client if not already loaded
                     opp_client_id = opp.get("client_id")
-                    if opp_client_id and opp_client_id != client_id:
+                    if opp_client_id and opp_client_id != client_id and not brand_config:
                         brand_config = self.get_brand_config(opp_client_id)
 
                     # Calculate all scores
                     scores = self.score_opportunity(opp, brand_config)
 
-                    # Get opportunity ID (handle both column names)
+                    if scores is None:
+                        excluded += 1
+                        continue
+
+                    # Get opportunity ID
                     opp_id = opp.get("opportunity_id") or opp.get("id")
 
-                    # Update database with ALL scores
+                    # Update database
                     update_data = {
+                        "timing_score": scores.get('timing_score'),
                         "relevance_score": scores['relevance_score'],
                         "commercial_intent_score": scores['commercial_intent_score'],
                         "engagement_score": scores['engagement_score'],
                         "composite_score": scores['composite_score'],
-                        "opportunity_score": scores['opportunity_score'],  # Backward compat
+                        "opportunity_score": scores['opportunity_score'],
                         "priority_tier": scores['priority_tier'],
                         "scoring_debug": scores['scoring_debug'],
                         "updated_at": datetime.utcnow().isoformat()
                     }
 
-                    # Use opportunity_id if available, otherwise id
                     if opp.get("opportunity_id"):
                         self.supabase.table("opportunities").update(update_data)\
                             .eq("opportunity_id", opp_id).execute()
@@ -840,23 +690,21 @@ class OpportunityScoringWorker:
                         logger.info(f"Processed {processed}/{len(opportunities.data)} opportunities")
 
                 except Exception as e:
-                    logger.error(f"Error scoring opportunity {opp.get('id')}: {str(e)}")
+                    logger.error(f"Error scoring opportunity {opp.get('opportunity_id', opp.get('id'))}: {str(e)}")
                     errors += 1
 
-            logger.info(f"Scoring complete: {processed} processed, {errors} errors")
-
-            # Check if there's more to process
-            more_to_process = len(opportunities.data) >= batch_size
+            logger.info(f"Scoring complete: {processed} processed, {excluded} excluded, {errors} errors")
 
             return {
                 "success": True,
                 "processed": processed,
+                "excluded": excluded,
                 "errors": errors,
                 "batch_size": batch_size,
                 "total_in_batch": len(opportunities.data),
-                "more_to_process": more_to_process,
-                "scoring_type": "THREE_SCORE_SYSTEM",
-                "message": f"Processed {processed} opportunities with relevance/intent/engagement scores"
+                "more_to_process": len(opportunities.data) >= batch_size,
+                "scoring_version": "v3.0_reddit_optimized",
+                "message": f"Processed {processed} opportunities with timing/velocity/intent/relevance scores"
             }
 
         except Exception as e:
@@ -867,44 +715,38 @@ class OpportunityScoringWorker:
             }
 
     def rescore_opportunity(self, opportunity_id: str) -> Dict:
-        """
-        Rescore a specific opportunity with all three scores
-
-        Args:
-            opportunity_id: ID of opportunity to rescore
-
-        Returns:
-            Dictionary with results
-        """
+        """Rescore a specific opportunity"""
         try:
-            # Get opportunity
             opp = self.supabase.table("opportunities")\
                 .select("*")\
                 .eq("opportunity_id", opportunity_id)\
                 .execute()
 
             if not opp.data:
-                # Try 'id' column
                 opp = self.supabase.table("opportunities")\
                     .select("*")\
                     .eq("id", opportunity_id)\
                     .execute()
 
             if not opp.data:
-                return {
-                    "success": False,
-                    "error": f"Opportunity {opportunity_id} not found"
-                }
+                return {"success": False, "error": f"Opportunity {opportunity_id} not found"}
 
             opportunity = opp.data[0]
             client_id = opportunity.get("client_id")
             brand_config = self.get_brand_config(client_id) if client_id else None
 
-            # Calculate all scores
             scores = self.score_opportunity(opportunity, brand_config)
 
-            # Update database
+            if scores.get('excluded'):
+                return {
+                    "success": True,
+                    "opportunity_id": opportunity_id,
+                    "excluded": True,
+                    "reason": scores.get('exclude_reason')
+                }
+
             update_data = {
+                "timing_score": scores.get('timing_score'),
                 "relevance_score": scores['relevance_score'],
                 "commercial_intent_score": scores['commercial_intent_score'],
                 "engagement_score": scores['engagement_score'],
@@ -932,31 +774,23 @@ class OpportunityScoringWorker:
 
         except Exception as e:
             logger.error(f"Error rescoring opportunity: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
 
-# Utility functions for direct execution
-def score_all_opportunities(client_id: Optional[str] = None):
-    """
-    Score all opportunities (can be called from scheduler)
-    """
+# Utility functions
+def score_all_opportunities(client_id: Optional[str] = None, force_rescore: bool = False):
+    """Score all opportunities (can be called from scheduler)"""
     worker = OpportunityScoringWorker()
-    return worker.process_all_opportunities(client_id)
+    return worker.process_all_opportunities(client_id, force_rescore=force_rescore)
 
 
 def score_opportunity_by_id(opportunity_id: str):
-    """
-    Score a specific opportunity
-    """
+    """Score a specific opportunity"""
     worker = OpportunityScoringWorker()
     return worker.rescore_opportunity(opportunity_id)
 
 
 if __name__ == "__main__":
-    # Test execution
-    logger.info("Running Opportunity Scoring Worker v2.0 (FOUR-SCORE SYSTEM with quality filters)...")
+    logger.info("Running Opportunity Scoring Worker v3.0 (Reddit Timing Optimized)...")
     result = score_all_opportunities()
     logger.info(f"Results: {result}")
