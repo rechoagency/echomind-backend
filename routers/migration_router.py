@@ -205,3 +205,74 @@ async def verify_knowledge_base_setup() -> Dict[str, Any]:
             status_code=500,
             detail=f"Verification failed: {str(e)}"
         )
+
+
+@router.post("/migrations/add-scoring-columns")
+async def run_scoring_columns_migration() -> Dict[str, Any]:
+    """
+    Add scoring columns to opportunities table:
+    - composite_score
+    - commercial_intent_score
+    - relevance_score
+    - engagement_score
+    - timing_score
+    - priority_tier
+    - scoring_debug
+    """
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            raise ValueError("DATABASE_URL not found in environment")
+
+        # Read migration SQL file
+        sql_file_path = os.path.join(os.path.dirname(__file__), '..', 'migrations', '006_add_scoring_columns.sql')
+        with open(sql_file_path, 'r') as f:
+            sql_content = f.read()
+
+        # Connect and execute
+        conn = psycopg2.connect(database_url)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cursor = conn.cursor()
+
+        logger.info("Running scoring columns migration...")
+        cursor.execute(sql_content)
+
+        cursor.close()
+        conn.close()
+
+        logger.info("Scoring columns migration completed!")
+
+        return {
+            "success": True,
+            "message": "Scoring columns added to opportunities table",
+            "columns_added": [
+                "composite_score DECIMAL(5,2)",
+                "commercial_intent_score DECIMAL(5,2)",
+                "relevance_score DECIMAL(5,2)",
+                "engagement_score DECIMAL(5,2)",
+                "timing_score DECIMAL(5,2)",
+                "priority_tier VARCHAR(20)",
+                "scoring_debug JSONB"
+            ],
+            "indexes_created": [
+                "idx_opportunities_composite_score",
+                "idx_opportunities_priority_tier"
+            ]
+        }
+
+    except ImportError:
+        return {
+            "success": False,
+            "message": "psycopg2 not installed - run migration manually",
+            "sql_file": "migrations/006_add_scoring_columns.sql",
+            "instructions": "Run this SQL in Supabase SQL Editor"
+        }
+    except Exception as e:
+        logger.error(f"Scoring migration failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Migration failed: {str(e)}"
+        )
