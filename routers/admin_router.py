@@ -683,18 +683,21 @@ async def test_content_generation_sync(request: TestContentRequest = None):
 
 
 @router.post("/run-opportunity-scoring")
-async def run_opportunity_scoring(client_id: str = None):
+async def run_opportunity_scoring(client_id: str = None, force_rescore: bool = False):
     """
     Manually trigger opportunity scoring for all or specific client.
-    Scores opportunities by: buying intent, pain points, questions, engagement, urgency.
+
+    Args:
+        client_id: Optional client ID to score (scores all if not provided)
+        force_rescore: If True, re-scores ALL opportunities even if already scored
     """
     try:
-        logger.info(f"🎯 Starting opportunity scoring (client_id: {client_id or 'all'})")
+        logger.info(f"🎯 Starting opportunity scoring (client_id: {client_id or 'all'}, force_rescore: {force_rescore})")
 
         from workers.opportunity_scoring_worker import OpportunityScoringWorker
 
         worker = OpportunityScoringWorker()
-        result = worker.process_all_opportunities(client_id)
+        result = worker.process_all_opportunities(client_id, force_rescore=force_rescore)
 
         logger.info(f"🎯 Scoring complete: {result}")
 
