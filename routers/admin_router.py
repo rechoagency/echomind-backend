@@ -2592,7 +2592,7 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
     """Debug endpoint to check if opportunity scores are being saved with v2.0 scoring"""
     import traceback
     try:
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             return {"error": "Supabase client not available"}
 
