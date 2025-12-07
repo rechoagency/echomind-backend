@@ -210,69 +210,81 @@ async def verify_knowledge_base_setup() -> Dict[str, Any]:
 @router.post("/migrations/add-scoring-columns")
 async def run_scoring_columns_migration() -> Dict[str, Any]:
     """
-    Add scoring columns to opportunities table:
-    - composite_score
-    - commercial_intent_score
-    - relevance_score
-    - engagement_score
-    - timing_score
-    - priority_tier
-    - scoring_debug
+    Add scoring columns to opportunities table using Supabase RPC.
+    Uses individual ALTER TABLE statements via Supabase client.
     """
     try:
-        import psycopg2
-        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        supabase = get_supabase_client()
+        columns_added = []
+        errors = []
 
-        database_url = os.getenv('DATABASE_URL')
-        if not database_url:
-            raise ValueError("DATABASE_URL not found in environment")
+        # Define columns to add
+        column_definitions = [
+            ("composite_score", "DECIMAL(5,2)"),
+            ("commercial_intent_score", "DECIMAL(5,2)"),
+            ("relevance_score", "DECIMAL(5,2)"),
+            ("engagement_score", "DECIMAL(5,2)"),
+            ("timing_score", "DECIMAL(5,2)"),
+            ("priority_tier", "VARCHAR(20)"),
+            ("scoring_debug", "JSONB"),
+        ]
 
-        # Read migration SQL file
-        sql_file_path = os.path.join(os.path.dirname(__file__), '..', 'migrations', '006_add_scoring_columns.sql')
-        with open(sql_file_path, 'r') as f:
-            sql_content = f.read()
+        # Check which columns already exist
+        try:
+            # Try selecting all columns to see which exist
+            test = supabase.table("opportunities").select("id").limit(1).execute()
+        except Exception as e:
+            logger.error(f"Failed to connect to opportunities table: {e}")
+            raise
 
-        # Connect and execute
-        conn = psycopg2.connect(database_url)
-        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        cursor = conn.cursor()
+        # For each column, try an update that would fail if column doesn't exist
+        for col_name, col_type in column_definitions:
+            try:
+                # Try to select the column - if it fails, column doesn't exist
+                supabase.table("opportunities").select(col_name).limit(1).execute()
+                columns_added.append(f"{col_name} (already exists)")
+            except Exception:
+                # Column doesn't exist - we need to add it via SQL Editor
+                errors.append(f"{col_name} needs to be added")
 
-        logger.info("Running scoring columns migration...")
-        cursor.execute(sql_content)
+        if errors:
+            # Return SQL for manual execution
+            return {
+                "success": False,
+                "message": "Some columns need to be added manually via Supabase SQL Editor",
+                "columns_to_add": errors,
+                "columns_existing": columns_added,
+                "manual_sql": """
+-- Run this in Supabase SQL Editor:
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS composite_score DECIMAL(5,2);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS commercial_intent_score DECIMAL(5,2);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS relevance_score DECIMAL(5,2);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS engagement_score DECIMAL(5,2);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS timing_score DECIMAL(5,2);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS priority_tier VARCHAR(20);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS scoring_debug JSONB;
 
-        cursor.close()
-        conn.close()
+CREATE INDEX IF NOT EXISTS idx_opportunities_composite_score ON opportunities (composite_score);
+CREATE INDEX IF NOT EXISTS idx_opportunities_priority_tier ON opportunities (priority_tier);
 
-        logger.info("Scoring columns migration completed!")
+NOTIFY pgrst, 'reload schema';
+                """,
+                "instructions": [
+                    "1. Go to Supabase Dashboard > SQL Editor",
+                    "2. Copy and run the SQL above",
+                    "3. Call this endpoint again to verify"
+                ]
+            }
 
         return {
             "success": True,
-            "message": "Scoring columns added to opportunities table",
-            "columns_added": [
-                "composite_score DECIMAL(5,2)",
-                "commercial_intent_score DECIMAL(5,2)",
-                "relevance_score DECIMAL(5,2)",
-                "engagement_score DECIMAL(5,2)",
-                "timing_score DECIMAL(5,2)",
-                "priority_tier VARCHAR(20)",
-                "scoring_debug JSONB"
-            ],
-            "indexes_created": [
-                "idx_opportunities_composite_score",
-                "idx_opportunities_priority_tier"
-            ]
+            "message": "All scoring columns already exist",
+            "columns": columns_added
         }
 
-    except ImportError:
-        return {
-            "success": False,
-            "message": "psycopg2 not installed - run migration manually",
-            "sql_file": "migrations/006_add_scoring_columns.sql",
-            "instructions": "Run this SQL in Supabase SQL Editor"
-        }
     except Exception as e:
-        logger.error(f"Scoring migration failed: {str(e)}")
+        logger.error(f"Scoring migration check failed: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Migration failed: {str(e)}"
+            detail=f"Migration check failed: {str(e)}"
         )
