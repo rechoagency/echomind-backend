@@ -231,8 +231,8 @@ async def run_scoring_columns_migration() -> Dict[str, Any]:
 
         # Check which columns already exist
         try:
-            # Try selecting all columns to see which exist
-            test = supabase.table("opportunities").select("id").limit(1).execute()
+            # Try selecting from table to verify connection
+            test = supabase.table("opportunities").select("opportunity_id").limit(1).execute()
         except Exception as e:
             logger.error(f"Failed to connect to opportunities table: {e}")
             raise
