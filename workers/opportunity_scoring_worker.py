@@ -140,12 +140,18 @@ class OpportunityScoringWorker:
         if age_hours is not None and age_hours > (self.MAX_THREAD_AGE_DAYS * 24):
             return (True, f"Thread is {round(age_hours/24, 1)} days old (max {self.MAX_THREAD_AGE_DAYS} days)")
 
-        # Check minimum comments
-        num_comments = (
-            opportunity.get('comment_count') or
-            opportunity.get('num_comments') or
-            opportunity.get('thread_num_comments', 0)
-        )
+        # Check minimum comments - safely convert to int
+        num_comments = 0
+        for field in ['comment_count', 'num_comments', 'thread_num_comments']:
+            val = opportunity.get(field)
+            if val is not None:
+                try:
+                    num_comments = int(val)
+                    if num_comments > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
+
         if num_comments < self.MIN_COMMENTS:
             return (True, f"Only {num_comments} comments (min {self.MIN_COMMENTS})")
 
@@ -234,17 +240,28 @@ class OpportunityScoringWorker:
             'velocity_category': 'unknown'
         }
 
-        # Get metrics
-        num_comments = (
-            opportunity.get('comment_count') or
-            opportunity.get('num_comments') or
-            opportunity.get('thread_num_comments', 0)
-        )
-        upvotes = (
-            opportunity.get('score', 0) or
-            opportunity.get('upvotes', 0) or
-            opportunity.get('thread_score', 0)
-        )
+        # Get metrics - safely convert to numbers
+        num_comments = 0
+        for field in ['comment_count', 'num_comments', 'thread_num_comments']:
+            val = opportunity.get(field)
+            if val is not None:
+                try:
+                    num_comments = int(val)
+                    if num_comments > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+        upvotes = 0
+        for field in ['score', 'upvotes', 'thread_score']:
+            val = opportunity.get(field)
+            if val is not None:
+                try:
+                    upvotes = int(val)
+                    if upvotes > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
 
         debug['comments'] = num_comments
         debug['upvotes'] = upvotes
