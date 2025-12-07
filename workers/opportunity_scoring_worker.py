@@ -34,16 +34,13 @@ import os
 import logging
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
-from supabase import create_client, Client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Use shared Supabase client
+from supabase_client import get_supabase_client
 
 
 class OpportunityScoringWorker:
@@ -101,7 +98,7 @@ class OpportunityScoringWorker:
 
     def __init__(self):
         """Initialize the scoring worker"""
-        self.supabase = supabase
+        self.supabase = get_supabase_client()
         logger.info("Opportunity Scoring Worker v3.0 initialized (REDDIT TIMING OPTIMIZED)")
 
     def get_thread_age_hours(self, opportunity: Dict) -> Optional[float]:
