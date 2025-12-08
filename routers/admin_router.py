@@ -2594,6 +2594,7 @@ async def generate_content_excel(
 async def debug_scored_opportunities(client_id: str, limit: int = 5):
     """Debug endpoint to check if opportunity scores are being saved with v2.0 scoring"""
     import traceback
+    from datetime import datetime
     try:
         supabase = get_supabase()
         if not supabase:
@@ -2623,15 +2624,50 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         # Get column names from first result
         columns = list(all_opps.data[0].keys())
 
-        # Extract just scoring columns for display
-        scoring_fields = ['commercial_intent_score', 'relevance_score', 'engagement_score',
-                          'composite_score', 'priority_tier', 'opportunity_score']
-        sample_scores = []
-        for opp in all_opps.data[:3]:
-            sample_scores.append({
+        # Extract detailed info for debugging
+        sample_details = []
+        for opp in all_opps.data[:10]:
+            # Get all timestamp fields
+            thread_created = opp.get('thread_created_at') or opp.get('date_posted') or opp.get('created_at')
+
+            # Calculate age if possible
+            age_hours = None
+            if thread_created:
+                try:
+                    if isinstance(thread_created, str):
+                        created_dt = datetime.fromisoformat(thread_created.replace('Z', '+00:00'))
+                    else:
+                        created_dt = datetime.fromtimestamp(thread_created)
+                    age_hours = round((datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 3600, 1)
+                except:
+                    pass
+
+            # Get exclusion reason from scoring_debug
+            scoring_debug = opp.get('scoring_debug') or {}
+            exclusion_reason = scoring_debug.get('reason') if isinstance(scoring_debug, dict) else None
+
+            sample_details.append({
                 'opportunity_id': opp.get('opportunity_id'),
-                'thread_title': (opp.get('thread_title') or '')[:50],
-                'scores': {k: opp.get(k) for k in scoring_fields if k in columns}
+                'thread_title': (opp.get('thread_title') or '')[:60],
+                'subreddit': opp.get('subreddit'),
+                'timestamps': {
+                    'thread_created_at': opp.get('thread_created_at'),
+                    'date_posted': opp.get('date_posted'),
+                    'created_at': opp.get('created_at'),
+                    'calculated_age_hours': age_hours
+                },
+                'engagement': {
+                    'thread_num_comments': opp.get('thread_num_comments'),
+                    'comment_count': opp.get('comment_count'),
+                    'num_comments': opp.get('num_comments'),
+                    'thread_score': opp.get('thread_score'),
+                    'score': opp.get('score')
+                },
+                'scoring': {
+                    'composite_score': opp.get('composite_score'),
+                    'priority_tier': opp.get('priority_tier'),
+                    'exclusion_reason': exclusion_reason
+                }
             })
 
         return {
@@ -2639,8 +2675,9 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
             "total_returned": len(all_opps.data),
             "scored_in_sample": len(scored),
             "unscored_in_sample": len(unscored),
+            "excluded_count": len([o for o in all_opps.data if o.get('priority_tier') == 'EXCLUDED']),
             "available_columns": columns,
-            "sample_scores": sample_scores
+            "sample_details": sample_details
         }
     except Exception as e:
         logger.error(f"Debug endpoint error: {e}")
