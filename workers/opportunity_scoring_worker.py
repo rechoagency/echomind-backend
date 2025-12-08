@@ -50,10 +50,10 @@ class OpportunityScoringWorker:
     """
 
     # ========================================
-    # MINIMUM FILTERS - Relaxed for niche subreddits
+    # MINIMUM FILTERS
     # ========================================
     MIN_COMMENTS = 1              # Lowered from 3 - niche subreddits have less activity
-    MAX_THREAD_AGE_DAYS = 14      # Extended from 7 - give more buffer for scoring
+    MAX_THREAD_AGE_DAYS = 7       # 7+ days = EXCLUDE (Reddit threads die after ~1 week)
 
     # ========================================
     # SCORING WEIGHTS - Reddit optimized
@@ -320,7 +320,50 @@ class OpportunityScoringWorker:
             upvote_velocity_score = 5
 
         # Combined velocity score (comments weighted higher)
-        score = min(100, comment_velocity_score + upvote_velocity_score)
+        base_velocity_score = comment_velocity_score + upvote_velocity_score
+
+        # ========================================
+        # ENGAGEMENT POTENTIAL BONUS
+        # High total engagement = more eyeballs = better opportunity
+        # This rewards deep/active threads even if rate is moderate
+        # ========================================
+        engagement_bonus = 0
+
+        # Total comments bonus (thread depth)
+        if num_comments >= 100:
+            engagement_bonus += 15  # Very deep thread
+            debug['comment_depth'] = 'very_deep'
+        elif num_comments >= 50:
+            engagement_bonus += 10  # Deep thread
+            debug['comment_depth'] = 'deep'
+        elif num_comments >= 25:
+            engagement_bonus += 7   # Moderate thread
+            debug['comment_depth'] = 'moderate'
+        elif num_comments >= 10:
+            engagement_bonus += 4   # Light thread
+            debug['comment_depth'] = 'light'
+        else:
+            debug['comment_depth'] = 'minimal'
+
+        # Total upvotes bonus (visibility)
+        if upvotes >= 500:
+            engagement_bonus += 10  # High visibility
+            debug['upvote_level'] = 'high_visibility'
+        elif upvotes >= 200:
+            engagement_bonus += 7
+            debug['upvote_level'] = 'good_visibility'
+        elif upvotes >= 100:
+            engagement_bonus += 5
+            debug['upvote_level'] = 'moderate_visibility'
+        elif upvotes >= 50:
+            engagement_bonus += 3
+            debug['upvote_level'] = 'some_visibility'
+        else:
+            debug['upvote_level'] = 'low_visibility'
+
+        debug['engagement_bonus'] = engagement_bonus
+
+        score = min(100, base_velocity_score + engagement_bonus)
         debug['velocity_score'] = score
 
         return (score, debug)

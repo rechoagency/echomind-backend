@@ -2267,28 +2267,21 @@ async def generate_content_excel(
         medical_industries = ['health', 'medical', 'wellness', 'supplement', 'vitamin', 'pharmaceutical', 'fertility']
         needs_medical_disclaimer = any(kw in industry for kw in medical_industries)
 
-        # Get opportunities with scoring data - prioritize recently scored ones
-        # Order by updated_at DESC to get recently scored opportunities first
+        # Get opportunities with scoring data - sort by composite_score DESC (best first)
+        # composite_score is the pre-calculated weighted score from opportunity_scoring_worker
         opps_response = supabase.table("opportunities")\
             .select("*")\
             .eq("client_id", client_id)\
-            .order("updated_at", desc=True)\
-            .limit(limit * 4)\
+            .not_.is_("composite_score", "null")\
+            .order("composite_score", desc=True)\
+            .limit(limit)\
             .execute()
 
         if not opps_response.data:
-            raise HTTPException(status_code=404, detail="No opportunities found for this client")
+            raise HTTPException(status_code=404, detail="No scored opportunities found for this client")
 
-        # Calculate weighted scores and sort by impact (highest first)
-        def calculate_weighted_score(opp):
-            commercial = opp.get('commercial_intent_score', 0) or 0
-            relevance = opp.get('relevance_score', 0) or 0
-            engagement = opp.get('engagement_score', 0) or 0
-            timing = opp.get('timing_score', 0) or 0
-            return commercial * 0.35 + relevance * 0.25 + engagement * 0.20 + timing * 0.20
-
-        opportunities = sorted(opps_response.data, key=calculate_weighted_score, reverse=True)[:limit]
-        logger.info(f"📊 Found {len(opportunities)} opportunities (sorted by weighted impact)")
+        opportunities = opps_response.data
+        logger.info(f"📊 Found {len(opportunities)} opportunities (sorted by composite_score DESC)")
 
         # Build opportunity lookup map for scoring data
         opp_lookup = {opp.get('opportunity_id'): opp for opp in opportunities}
