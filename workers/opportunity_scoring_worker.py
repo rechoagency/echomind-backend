@@ -50,10 +50,10 @@ class OpportunityScoringWorker:
     """
 
     # ========================================
-    # MINIMUM FILTERS - Exclude if ANY fail
+    # MINIMUM FILTERS - Relaxed for niche subreddits
     # ========================================
-    MIN_COMMENTS = 3              # At least 3 comments shows engagement
-    MAX_THREAD_AGE_DAYS = 7       # 7+ days = archived/invisible on Reddit
+    MIN_COMMENTS = 1              # Lowered from 3 - niche subreddits have less activity
+    MAX_THREAD_AGE_DAYS = 14      # Extended from 7 - give more buffer for scoring
 
     # ========================================
     # SCORING WEIGHTS - Reddit optimized
@@ -141,18 +141,20 @@ class OpportunityScoringWorker:
             return (True, f"Thread is {round(age_hours/24, 1)} days old (max {self.MAX_THREAD_AGE_DAYS} days)")
 
         # Check minimum comments - safely convert to int
-        num_comments = 0
+        # If ALL comment fields are null/missing, don't exclude (treat as unknown)
+        num_comments = None
         for field in ['comment_count', 'num_comments', 'thread_num_comments']:
             val = opportunity.get(field)
             if val is not None:
                 try:
                     num_comments = int(val)
-                    if num_comments > 0:
-                        break
+                    break
                 except (ValueError, TypeError):
                     continue
 
-        if num_comments < self.MIN_COMMENTS:
+        # Only exclude if we KNOW it has less than MIN_COMMENTS
+        # If num_comments is None (unknown), don't exclude
+        if num_comments is not None and num_comments < self.MIN_COMMENTS:
             return (True, f"Only {num_comments} comments (min {self.MIN_COMMENTS})")
 
         # Check if locked/removed (if we have that data)
