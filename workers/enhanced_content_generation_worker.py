@@ -3,13 +3,13 @@ Enhanced Content Generation Worker
 
 Generates ultra-human Reddit content by:
 1. Matching subreddit voice profiles
-2. Enriching with vectorized client data
-3. Using GPT-4 Turbo with anti-AI-pattern prompts
-4. Respecting brand mention % controls
-5. Including realistic typos, idioms, and natural language patterns
+2. Enriching with vectorized client data (RAG from document_embeddings)
+3. Adding real-time web search facts (if SERPAPI_KEY configured)
+4. Using GPT-4 Turbo with anti-AI-pattern prompts
+5. Respecting brand mention % controls
+6. Including realistic typos, idioms, and natural language patterns
 
 This replaces the basic content_generation_worker.py with voice-aware generation.
-import numpy as np
 """
 
 import os
@@ -19,7 +19,8 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import random
 import re
-from openai import OpenAI
+import numpy as np
+from openai import OpenAI, AsyncOpenAI
 
 from database import get_supabase_client
 
@@ -140,15 +141,123 @@ class EnhancedContentGenerator:
             return self._get_default_voice_profile(subreddit)
     
     async def _get_enrichment_data(self, thread_context: Dict, client_data: Dict) -> Dict[str, Any]:
-        """Get relevant client knowledge via vector search"""
-        # This would do actual vector search in production
-        # For now, return structured data
-        return {
-            "relevant_products": client_data.get('products', []),
-            "unique_knowledge": client_data.get('unique_knowledge', []),
-            "scientific_data": client_data.get('scientific_data', []),
-            "customer_insights": client_data.get('customer_insights', [])
+        """
+        Get relevant client knowledge via ACTUAL RAG vector search + web search.
+
+        This is the critical function that feeds SPECIFIC facts into content generation.
+        Without this working, content is fluffy/generic.
+        """
+        enrichment = {
+            "relevant_products": [],
+            "unique_knowledge": [],
+            "scientific_data": [],
+            "customer_insights": [],
+            "web_search_facts": [],
+            "specific_specs": []
         }
+
+        client_id = client_data.get('client_id')
+        company_name = client_data.get('company_name', '')
+
+        # Build search query from thread context
+        search_text = f"{thread_context.get('title', '')} {thread_context.get('body', '')[:500]}"
+
+        # ========================================
+        # STEP 1: RAG Vector Search
+        # ========================================
+        try:
+            rag_results = await self._rag_vector_search(client_id, search_text)
+
+            for chunk in rag_results:
+                chunk_text = chunk.get('chunk_text', '')
+                metadata = chunk.get('metadata', {})
+                category = metadata.get('category', 'general')
+
+                # Route to appropriate enrichment category
+                if category == 'product':
+                    enrichment["relevant_products"].append({
+                        "name": metadata.get('title', 'Product'),
+                        "description": chunk_text[:300]
+                    })
+                elif category == 'spec':
+                    enrichment["specific_specs"].append(chunk_text[:200])
+                elif category == 'faq':
+                    enrichment["unique_knowledge"].append(chunk_text[:200])
+                else:
+                    enrichment["unique_knowledge"].append(chunk_text[:200])
+
+            logger.info(f"RAG enrichment: Found {len(rag_results)} relevant chunks for {company_name}")
+
+        except Exception as e:
+            logger.error(f"RAG vector search failed: {e}")
+
+        # ========================================
+        # STEP 2: Web Search Enrichment (if configured)
+        # ========================================
+        try:
+            from services.web_search_service import enrich_with_web_search
+
+            products = client_data.get('products', [])
+            if isinstance(products, list) and products:
+                product_names = [p.get('name') if isinstance(p, dict) else str(p) for p in products[:3]]
+            else:
+                product_names = []
+
+            web_results = await enrich_with_web_search(
+                topic=thread_context.get('title', ''),
+                company_name=company_name,
+                products=product_names
+            )
+
+            if web_results.get('enabled') and not web_results.get('error'):
+                enrichment["web_search_facts"] = web_results.get('topic_facts', [])[:3]
+
+                for detail in web_results.get('product_details', [])[:2]:
+                    if detail.get('detail'):
+                        enrichment["specific_specs"].append(detail['detail'])
+
+                logger.info(f"Web search enrichment: Found {len(enrichment['web_search_facts'])} facts")
+
+        except Exception as e:
+            logger.warning(f"Web search enrichment failed (optional): {e}")
+
+        return enrichment
+
+    async def _rag_vector_search(self, client_id: str, search_text: str, limit: int = 5) -> List[Dict]:
+        """
+        Perform actual vector similarity search against document_embeddings.
+        Uses the match_knowledge_embeddings RPC function.
+        """
+        try:
+            # Generate embedding for search text
+            openai_async = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            embedding_response = await openai_async.embeddings.create(
+                model="text-embedding-ada-002",
+                input=search_text[:8000]
+            )
+            query_embedding = embedding_response.data[0].embedding
+
+            # Call Supabase RPC for vector similarity search
+            response = self.supabase.rpc(
+                'match_knowledge_embeddings',
+                {
+                    'query_embedding': query_embedding,
+                    'match_client_id': client_id,
+                    'match_threshold': 0.7,
+                    'match_count': limit
+                }
+            ).execute()
+
+            if response.data:
+                logger.info(f"RAG search returned {len(response.data)} chunks")
+                return response.data
+            else:
+                logger.warning(f"RAG search returned no results for client {client_id}")
+                return []
+
+        except Exception as e:
+            logger.error(f"RAG vector search error: {e}")
+            return []
     
     def _should_include_brand_mention(
         self,
@@ -252,8 +361,8 @@ Share real experience and practical advice only.
         enrichment_data: Dict,
         include_brand: bool
     ) -> str:
-        """Build user prompt with thread context"""
-        
+        """Build user prompt with thread context and SPECIFIC facts from RAG + web search"""
+
         prompt = f"""Thread Title: {thread_context['title']}
 Subreddit: r/{thread_context['subreddit']}
 Target User: u/{thread_context['target_user']}
@@ -265,30 +374,55 @@ User's Situation (based on post history):
 {thread_context.get('user_context', 'New parent seeking advice')}
 
 """
-        
+
+        # Add specific specs from RAG (THIS IS KEY FOR NON-FLUFFY CONTENT)
+        if enrichment_data.get('specific_specs'):
+            prompt += f"""
+=== SPECIFIC PRODUCT FACTS (use these exact details) ===
+{chr(10).join([f"• {spec}" for spec in enrichment_data['specific_specs'][:5]])}
+"""
+
+        # Add products with descriptions from RAG
         if include_brand and enrichment_data.get('relevant_products'):
             prompt += f"""
-Relevant Products (mention naturally if appropriate):
-{chr(10).join([f"- {p['name']}: {p.get('description', '')}" for p in enrichment_data['relevant_products'][:2]])}
+=== RELEVANT PRODUCTS (mention naturally if appropriate) ===
+{chr(10).join([f"• {p['name']}: {p.get('description', '')[:200]}" for p in enrichment_data['relevant_products'][:2]])}
 """
-        
+
+        # Add unique knowledge from RAG
         if enrichment_data.get('unique_knowledge'):
             prompt += f"""
-Unique Insights (use to show expertise):
-{chr(10).join([f"- {k}" for k in enrichment_data['unique_knowledge'][:3]])}
+=== EXPERT KNOWLEDGE (use to show expertise) ===
+{chr(10).join([f"• {k}" for k in enrichment_data['unique_knowledge'][:3]])}
 """
-        
+
+        # Add web search facts (real-time enrichment)
+        if enrichment_data.get('web_search_facts'):
+            prompt += f"""
+=== CURRENT FACTS FROM WEB (very recent info) ===
+{chr(10).join([f"• {fact}" for fact in enrichment_data['web_search_facts'][:3]])}
+"""
+
         prompt += """
+=== CONTENT REQUIREMENTS ===
 Write a response that:
 1. Sounds like a real person who's been through this
 2. Is genuinely helpful without being preachy
 3. Includes the realistic typos specified
 4. Matches the subreddit's voice perfectly
 5. Feels like a 2am text to a friend, not a blog post
+6. MUST include at least 2 SPECIFIC facts/numbers from above (dimensions, prices, specs, etc.)
+7. AVOID generic advice - be SPECIFIC with actual product details
 
 Length: 100-300 words (natural paragraph breaks)
+
+IMPORTANT: Generic fluffy content is NOT acceptable. Include SPECIFIC details like:
+- Exact dimensions (e.g., "50 inches wide")
+- Specific features (e.g., "60+ flame color options")
+- Real numbers (e.g., "5000 BTU heat output")
+- Actual model names (e.g., "Sideline Elite 50")
 """
-        
+
         return prompt
     
     async def _generate_with_gpt4(
