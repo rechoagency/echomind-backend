@@ -38,17 +38,21 @@ class ProductMatchbackWorker:
     def generate_embedding(self, text: str) -> List[float]:
         """
         Generate OpenAI embedding for text
-        
+
+        IMPORTANT: Must use text-embedding-ada-002 to match the embeddings stored
+        in document_embeddings table. Using a different model would cause
+        similarity searches to fail or return incorrect results.
+
         Args:
             text: Text to embed
-            
+
         Returns:
-            Embedding vector
+            Embedding vector (1536 dimensions)
         """
         try:
             response = self.openai.embeddings.create(
-                model="text-embedding-3-small",
-                input=text
+                model="text-embedding-ada-002",  # Must match document_ingestion_service
+                input=text[:8000]  # Truncate to avoid token limits
             )
             return response.data[0].embedding
         except Exception as e:
@@ -56,7 +60,7 @@ class ProductMatchbackWorker:
             raise
     
     def find_matching_products(
-        self, 
+        self,
         client_id: str,
         query_text: str,
         limit: int = 3,
@@ -64,37 +68,65 @@ class ProductMatchbackWorker:
     ) -> List[Dict]:
         """
         Find products matching the query using vector similarity
-        
+
+        Uses document_embeddings table (the unified storage for all embeddings)
+        with match_knowledge_embeddings RPC for efficient vector search.
+
         Args:
             client_id: Client UUID
             query_text: User's question/problem description
             limit: Maximum number of products to return
             similarity_threshold: Minimum similarity score (0-1)
-            
+
         Returns:
             List of matching products with metadata
         """
         try:
-            # Generate embedding for query
+            # Generate embedding for query (using text-embedding-ada-002 for consistency)
             query_embedding = self.generate_embedding(query_text)
-            
-            # Search for similar chunks in vector_embeddings table
-            # Note: This requires a PostgreSQL function for vector similarity
-            # The function should be created in Supabase during setup
-            
-            # For now, we'll do a simpler approach: get all embeddings and calculate similarity
-            # In production, use pgvector's built-in similarity functions
-            
-            embeddings = self.supabase.table("vector_embeddings")\
-                .select("*, document_chunks!inner(chunk_text, document_id, document_uploads!inner(filename, document_type))")\
+
+            # Use match_knowledge_embeddings RPC for efficient vector search
+            # This queries the document_embeddings table
+            try:
+                results = self.supabase.rpc(
+                    "match_knowledge_embeddings",
+                    {
+                        "query_embedding": query_embedding,
+                        "client_id": client_id,
+                        "similarity_threshold": similarity_threshold,
+                        "match_count": limit
+                    }
+                ).execute()
+
+                if results.data:
+                    matches = []
+                    for result in results.data:
+                        metadata = result.get("metadata") or {}
+                        matches.append({
+                            "chunk_text": result.get("chunk_text", ""),
+                            "similarity_score": round(result.get("similarity", 0), 4),
+                            "document_id": result.get("document_id"),
+                            "document_filename": metadata.get("filename"),
+                            "document_type": metadata.get("document_type"),
+                            "chunk_id": result.get("id")
+                        })
+                    logger.info(f"Found {len(matches)} product matches via RPC (threshold: {similarity_threshold})")
+                    return matches
+
+            except Exception as rpc_error:
+                logger.warning(f"RPC search failed, falling back to direct query: {rpc_error}")
+
+            # Fallback: Direct query to document_embeddings table
+            embeddings = self.supabase.table("document_embeddings")\
+                .select("id, document_id, chunk_text, embedding, metadata")\
                 .eq("client_id", client_id)\
                 .limit(100)\
                 .execute()
-            
+
             if not embeddings.data:
                 logger.warning(f"No embeddings found for client {client_id}")
                 return []
-            
+
             # Calculate cosine similarity for each embedding
             matches = []
             for emb in embeddings.data:
@@ -107,34 +139,27 @@ class ProductMatchbackWorker:
                     similarity = self._cosine_similarity(query_embedding, stored_embedding)
 
                     if similarity >= similarity_threshold:
-                        # Safely get nested data with None checks
-                        chunk_data = emb.get("document_chunks") or {}
-                        if chunk_data is None:
-                            chunk_data = {}
-                        doc_data = chunk_data.get("document_uploads") or {}
-                        if doc_data is None:
-                            doc_data = {}
-
+                        metadata = emb.get("metadata") or {}
                         matches.append({
-                            "chunk_text": chunk_data.get("chunk_text", "") if chunk_data else "",
+                            "chunk_text": emb.get("chunk_text", ""),
                             "similarity_score": round(similarity, 4),
-                            "document_id": chunk_data.get("document_id") if chunk_data else None,
-                            "document_filename": doc_data.get("filename") if doc_data else None,
-                            "document_type": doc_data.get("document_type") if doc_data else None,
-                            "chunk_id": emb.get("chunk_id")
+                            "document_id": emb.get("document_id"),
+                            "document_filename": metadata.get("filename"),
+                            "document_type": metadata.get("document_type"),
+                            "chunk_id": emb.get("id")
                         })
                 except Exception as e:
                     logger.error(f"Error calculating similarity: {str(e)}")
                     continue
-            
+
             # Sort by similarity score (descending) and take top N
             matches.sort(key=lambda x: x["similarity_score"], reverse=True)
             top_matches = matches[:limit]
-            
+
             logger.info(f"Found {len(top_matches)} product matches for query (threshold: {similarity_threshold})")
-            
+
             return top_matches
-        
+
         except Exception as e:
             logger.error(f"Error finding matching products: {str(e)}")
             return []

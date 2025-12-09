@@ -350,74 +350,60 @@ class DocumentIngestionService:
         document_type: str
     ) -> str:
         """
-        Process a single chunk: store it and create embedding
-        
+        Process a single chunk: create embedding and store directly in document_embeddings
+
+        SIMPLIFIED: Writes directly to document_embeddings table (used by RAG queries)
+        Skips intermediate document_chunks and vector_embeddings tables to avoid
+        schema dependency issues and simplify the pipeline.
+
         Args:
             document_id: Parent document ID
             client_id: Client UUID
             chunk_text: Text content of chunk
             chunk_index: Index of chunk in document
             document_type: Type of document
-            
+
         Returns:
-            Chunk ID
+            Embedding ID
         """
-        # Store chunk
-        chunk_record = {
-            "document_id": document_id,
-            "client_id": client_id,
-            "chunk_index": chunk_index,
-            "chunk_text": chunk_text,
-            "char_count": len(chunk_text),
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        chunk_result = self.supabase.table("document_chunks").insert(chunk_record).execute()
-        chunk_id = chunk_result.data[0]["id"]
-        
+        import uuid
+        embedding_id = str(uuid.uuid4())
+
         # Generate embedding
         try:
             embedding = self._generate_embedding(chunk_text)
 
-            # Store embedding in vector_embeddings (original table)
+            if not embedding:
+                logger.warning(f"Failed to generate embedding for chunk {chunk_index}")
+                return embedding_id
+
+            # Store DIRECTLY in document_embeddings (the table RAG queries use)
+            # This is the PRIMARY and ONLY storage location now
             embedding_record = {
-                "chunk_id": chunk_id,
+                "document_id": document_id,
                 "client_id": client_id,
+                "chunk_text": chunk_text,
+                "chunk_index": chunk_index,
                 "embedding": embedding,
-                "model": "text-embedding-ada-002",  # MUST match _generate_embedding()
-                "document_type": document_type,
+                "metadata": {
+                    "document_type": document_type,
+                    "char_count": len(chunk_text),
+                    "source": "document_ingestion_service"
+                },
                 "created_at": datetime.utcnow().isoformat()
             }
 
-            self.supabase.table("vector_embeddings").insert(embedding_record).execute()
+            result = self.supabase.table("document_embeddings").insert(embedding_record).execute()
 
-            # DUAL-WRITE: Also store in document_embeddings (for RAG queries)
-            # This table is queried by match_knowledge_embeddings RPC function
-            try:
-                rag_embedding_record = {
-                    "document_id": document_id,
-                    "client_id": client_id,
-                    "chunk_text": chunk_text,
-                    "chunk_index": chunk_index,
-                    "embedding": embedding,
-                    "metadata": {
-                        "document_type": document_type,
-                        "char_count": len(chunk_text),
-                        "source": "document_ingestion_service"
-                    },
-                    "created_at": datetime.utcnow().isoformat()
-                }
-                self.supabase.table("document_embeddings").insert(rag_embedding_record).execute()
-                logger.info(f"Dual-write: Inserted embedding into document_embeddings for RAG")
-            except Exception as rag_e:
-                logger.warning(f"Failed to dual-write to document_embeddings: {rag_e}")
-                # Continue - vector_embeddings write succeeded
+            if result.data:
+                embedding_id = result.data[0].get("id", embedding_id)
+                logger.info(f"Stored embedding {embedding_id} for chunk {chunk_index} in document_embeddings")
 
         except Exception as e:
-            logger.error(f"Error generating embedding for chunk {chunk_id}: {str(e)}")
+            logger.error(f"Error processing chunk {chunk_index}: {str(e)}")
             # Continue processing even if embedding fails
 
-        return chunk_id
+        return embedding_id
     
     def _generate_embedding(self, text: str) -> List[float]:
         """
@@ -448,34 +434,39 @@ class DocumentIngestionService:
     ) -> List[Dict[str, Any]]:
         """
         Search for similar content using vector similarity
-        
+
+        Uses match_knowledge_embeddings RPC function which queries document_embeddings table.
+
         Args:
             client_id: Client UUID
             query_text: Search query
             limit: Maximum number of results
             similarity_threshold: Minimum similarity score (0-1)
-            
+
         Returns:
             List of matching chunks with similarity scores
         """
         try:
             # Generate embedding for query
             query_embedding = self._generate_embedding(query_text)
-            
-            # Use Supabase RPC function for vector similarity search
-            # This requires a database function to be created (see migration SQL)
+
+            if not query_embedding:
+                logger.warning("Failed to generate query embedding")
+                return []
+
+            # Use match_knowledge_embeddings RPC (queries document_embeddings table)
             results = self.supabase.rpc(
-                "search_similar_chunks",
+                "match_knowledge_embeddings",
                 {
                     "query_embedding": query_embedding,
-                    "query_client_id": client_id,
-                    "match_threshold": similarity_threshold,
+                    "client_id": client_id,
+                    "similarity_threshold": similarity_threshold,
                     "match_count": limit
                 }
             ).execute()
-            
-            return results.data
-            
+
+            return results.data or []
+
         except Exception as e:
             logger.error(f"Error searching similar content: {str(e)}")
             return []
