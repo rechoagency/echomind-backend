@@ -42,19 +42,22 @@ class KnowledgeMatchbackService:
     ) -> List[Dict[str, Any]]:
         """
         Find relevant knowledge base insights for an opportunity
-        
+
         Args:
             opportunity_text: Combined title + content from Reddit opportunity
             client_id: Client UUID
             similarity_threshold: Minimum similarity score (0.70 = 70%)
             max_insights: Maximum number of insights to return
-            
+
         Returns:
             List of relevant insights with excerpts and metadata
         """
         try:
+            logger.info(f"[RAG] match_opportunity_to_knowledge called for client {client_id}")
+            logger.info(f"[RAG] OpenAI client initialized: {self.openai_client is not None}")
+
             if not self.openai_client:
-                logger.warning("OpenAI not configured - skipping knowledge matchback")
+                logger.warning("[RAG] OpenAI not configured - skipping knowledge matchback")
                 return []
             
             # Generate embedding for opportunity text
@@ -73,6 +76,7 @@ class KnowledgeMatchbackService:
             #   query_embedding vector(1536), client_id uuid,
             #   similarity_threshold float, match_count int
             # )
+            logger.info(f"[RAG] Calling RPC match_knowledge_embeddings with threshold={similarity_threshold}, max={max_insights}")
             response = self.supabase.rpc(
                 'match_knowledge_embeddings',
                 {
@@ -82,9 +86,11 @@ class KnowledgeMatchbackService:
                     'match_count': max_insights
                 }
             ).execute()
-            
+
+            logger.info(f"[RAG] RPC response data count: {len(response.data) if response.data else 0}")
+
             if not response.data:
-                logger.info(f"No knowledge base matches found above {similarity_threshold} threshold")
+                logger.info(f"[RAG] No knowledge base matches found above {similarity_threshold} threshold")
                 return []
             
             # Format results
