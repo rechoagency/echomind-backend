@@ -725,7 +725,7 @@ NOTE: The good example doesn't always mention the brand - that's intentional bas
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-LENGTH: Write 50-150 words in ONE paragraph. No line breaks. No tracking links. No URLs.
+LENGTH: Write 50-200 words depending on what's typical for the subreddit. Match the natural length of replies in that community - some subreddits have shorter casual replies, others have longer detailed discussions. ONE paragraph unless the subreddit typically uses longer formats. No tracking links. No URLs.
 Sound like a helpful stranger on Reddit, not a product guide.
 End naturally - no call to action, no "hope this helps", no summary.
 

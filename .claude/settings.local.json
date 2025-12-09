@@ -21,7 +21,10 @@
       "Bash(fi)",
       "Bash(python3 -m py_compile:*)",
       "Bash(python3 -m pip install:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(if [ -f /c/echomind/echomind-backend/.env ])",
+      "Bash(then source /c/echomind/echomind-backend/.env)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
