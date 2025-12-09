@@ -544,11 +544,12 @@ class ContentGenerationWorker:
             owned_subreddits = client_data.get('owned_subreddits', []) or client_data.get('brand_owned_subreddits', [])
         is_owned = subreddit in owned_subreddits or f"r/{subreddit}" in owned_subreddits
 
-        # Build knowledge context
+        # Build knowledge context - CRITICAL: Include specific details
         knowledge_text = ""
-        if knowledge_insights and len(knowledge_insights) > 0:
+        has_knowledge = knowledge_insights and len(knowledge_insights) > 0
+        if has_knowledge:
             knowledge_text = "\n".join([
-                f"- {insight.get('excerpt', insight.get('chunk_text', ''))[:400]}"
+                f"- {insight.get('excerpt', insight.get('chunk_text', ''))[:500]}"
                 for insight in knowledge_insights[:3]
             ])
 
@@ -586,7 +587,12 @@ Subreddit: r/{subreddit}
 Title: {thread_title}
 Original post: {thread_content[:1500] if thread_content else '[No content]'}
 
-{f"CLIENT KNOWLEDGE (use subtly if relevant):{chr(10)}{knowledge_text}" if knowledge_text else ""}
+{f'''PRODUCT KNOWLEDGE - YOU MUST USE THESE FACTS:
+{knowledge_text}
+
+IMPORTANT: Include at least ONE specific fact from the knowledge above.
+Use exact numbers, model names, dimensions, or features when relevant.
+DO NOT make up specifications - only use what's provided above.''' if has_knowledge else ""}
 
 BRAND CONTEXT: {brand_context}
 

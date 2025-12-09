@@ -13,7 +13,15 @@
       "Bash(TOUCHSTONE_ID=\"999ac53f-0217-4234-b522-9bdfe9ff3bfd\")",
       "Bash(for file in \"17981_NPS_Promotors_Export.csv\" \"17981_PublishedQ&A_Export.csv\")",
       "Bash(do)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(python:*)",
+      "Bash(if [ -f .env ])",
+      "Bash(then source .env)",
+      "Bash(else echo '.env file not found')",
+      "Bash(fi)",
+      "Bash(python3 -m py_compile:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []
