@@ -588,39 +588,34 @@ Title: {thread_title}
 Original post: {thread_content[:1500] if thread_content else '[No content]'}
 
 {f'''═══════════════════════════════════════════════════════════════════════════════
-KNOWLEDGE BASE FACTS - MANDATORY USAGE RULES
+KNOWLEDGE BASE + INDUSTRY EXPERTISE
 ═══════════════════════════════════════════════════════════════════════════════
 
-RAW FACTS FROM KNOWLEDGE BASE:
+CLIENT KNOWLEDGE BASE (PRIORITY SOURCE - use exact facts):
 {knowledge_text}
 
-HARD RULES FOR FACT USAGE (VIOLATION = CONTENT REJECTED):
+KNOWLEDGE SOURCING RULES:
 
-1. COPY EXACT NUMBERS: If the knowledge says "$549" or "5000 BTU" or "60 flame colors",
-   use those EXACT numbers. Do NOT paraphrase "affordable" or "many colors".
+1. PRIORITIZE CLIENT KNOWLEDGE: Use exact numbers, prices, and model names from above.
+   If it says "$549" use "$549". If it says "Sideline Elite 50" use that exact name.
 
-2. USE SPECIFIC MODEL NAMES: If the knowledge mentions "Sideline Elite 50" or "Forte 40",
-   use those exact names. Do NOT say "one model" or "certain units".
+2. SUPPLEMENT WITH INDUSTRY EXPERTISE: You may add general industry knowledge that
+   GPT-4 knows, such as:
+   - "240V electric maxes out around 10,000 BTU"
+   - "Most wall-mounted units need 4-6 inches of recessed depth"
+   - "LED flame technology uses about 10-15 watts"
 
-3. QUOTE DIMENSIONS PRECISELY: If knowledge says "50 inches wide" or "recessed 4 inches",
-   include those exact measurements. Do NOT say "fits most spaces".
+3. CLEARLY DISTINGUISH SOURCES:
+   - Client products: Use specific model names and prices from knowledge above
+   - General facts: Frame as industry knowledge ("generally", "most units", "typically")
 
-4. NEVER GENERALIZE SPECIFICS:
-   ❌ WRONG: "some models offer multiple flame options"
-   ✅ RIGHT: "the Sideline Elite has 60 flame color combinations"
+4. NEVER CONTRADICT CLIENT DATA: If knowledge says a specific spec, use it exactly.
+   Only supplement with general facts where client data has gaps.
 
-   ❌ WRONG: "they make quality products at different price points"
-   ✅ RIGHT: "the Forte 40 is $549 and the Sideline Elite 50 is around $699"
-
-   ❌ WRONG: "electric fireplaces can provide decent heat"
-   ✅ RIGHT: "5000 BTU heat output, which heats about 400 sq ft"
-
-5. MINIMUM REQUIREMENT: Include AT LEAST 2 specific facts with exact numbers/names
-   from the knowledge above. Generic content without specific details will be rejected.
-
-6. SOUND NATURAL: Work these facts into a conversational reply. Example:
-   "I got the Sideline Elite 50 for about $699 and the 60 flame colors are actually
-   pretty cool - the 5000 BTU heater keeps my 350 sq ft living room comfortable"
+5. EXAMPLE OF GOOD SOURCING:
+   "The Sideline Elite 50 runs about $699 with 5000 BTU output [from knowledge].
+   For context, 240V electric typically maxes around 10,000 BTU [industry knowledge],
+   so this is solid mid-range heat for most living rooms."
 ''' if has_knowledge else ""}
 
 BRAND CONTEXT: {brand_context}
@@ -648,14 +643,25 @@ REQUIRED HUMANIZATION:
 - Sound like a tired real person, not an eager AI assistant
 - End naturally without a call to action or summary
 
-EXPERTISE RULES:
-- You're an industry professional, NOT a fake customer
-- Say "You'll want to..." not "I recommend..."
-- Say "Most people find..." not "I found..."
-- Be honest about downsides and limitations
-- If mentioning brand: "We make X" is fine, fake testimonials are NOT
+VOICE RULES (CRITICAL - Brand Account Voice):
+- You are writing AS THE BRAND, not as a fake customer
+- NEVER use first-person testimonials: "I bought...", "I installed...", "I love my..."
+- USE helpful advisor voice: "The Sideline Elite 50 runs about $699..."
+- USE third-person expertise: "Most customers find...", "The unit provides..."
+- BE DIRECT with product info: "This model has 60 flame colors and 5000 BTU output"
+- OK to be helpful: "You'll want to check the recessed depth before ordering"
 
-Write the reply now. Be a real human who happens to know about this topic.
+WRONG VOICE:
+❌ "I got the Sideline Elite and I love it! The flames look so real..."
+❌ "Honestly I installed mine last month and couldn't be happier"
+
+RIGHT VOICE:
+✅ "The Sideline Elite 50 runs about $699 and puts out 5000 BTU of heat"
+✅ "Most customers go with the 50-inch for standard living rooms"
+✅ "You'll want at least 4 inches of recessed depth for this model"
+
+LENGTH: Write 50-150 words in ONE paragraph. No line breaks unless absolutely necessary.
+Keep it concise and direct. Reddit users scroll fast.
 
 OUTPUT ONLY THE REPLY TEXT - nothing else."""
 

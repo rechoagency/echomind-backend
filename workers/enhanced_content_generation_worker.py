@@ -405,44 +405,43 @@ User's Situation (based on post history):
 
         prompt += """
 ═══════════════════════════════════════════════════════════════════════════════
-HARD RULES FOR CONTENT (VIOLATION = CONTENT REJECTED)
+KNOWLEDGE SOURCING RULES
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. COPY EXACT NUMBERS FROM KNOWLEDGE ABOVE:
-   - If specs say "$549" → use "$549", NOT "affordable"
-   - If specs say "5000 BTU" → use "5000 BTU", NOT "good heat"
-   - If specs say "60 flame colors" → use "60 flame colors", NOT "many colors"
+1. PRIORITIZE CLIENT KNOWLEDGE: Use exact numbers, prices, and model names from above.
+   If it says "$549" use "$549". If it says "Sideline Elite 50" use that exact name.
 
-2. USE SPECIFIC MODEL NAMES:
-   - If knowledge mentions "Sideline Elite 50" → use that exact name
-   - NEVER say "one model" or "certain products" when you have the name
+2. SUPPLEMENT WITH INDUSTRY EXPERTISE: You may add general industry knowledge such as:
+   - "240V electric maxes out around 10,000 BTU"
+   - "Most wall-mounted units need 4-6 inches of recessed depth"
+   - Frame general facts as: "generally", "most units", "typically"
 
-3. QUOTE DIMENSIONS PRECISELY:
-   - If knowledge says "50 inches wide" → include "50 inches"
-   - NEVER say "fits most spaces" when you have exact measurements
+3. NEVER CONTRADICT CLIENT DATA: If knowledge says a specific spec, use it exactly.
+   Only supplement with general facts where client data has gaps.
 
-4. NEVER GENERALIZE SPECIFICS:
-   ❌ WRONG: "some models offer multiple flame options"
-   ✅ RIGHT: "the Sideline Elite has 60 flame color combinations"
+═══════════════════════════════════════════════════════════════════════════════
+VOICE RULES (CRITICAL - Brand Account Voice)
+═══════════════════════════════════════════════════════════════════════════════
 
-   ❌ WRONG: "they make quality products at different price points"
-   ✅ RIGHT: "the Forte 40 is $549 and the Sideline Elite 50 is around $699"
+- You are writing AS THE BRAND, not as a fake customer
+- NEVER use first-person testimonials: "I bought...", "I installed...", "I love my..."
+- USE helpful advisor voice: "The Sideline Elite 50 runs about $699..."
+- USE third-person expertise: "Most customers find...", "The unit provides..."
+- BE DIRECT with product info: "This model has 60 flame colors and 5000 BTU output"
 
-   ❌ WRONG: "electric fireplaces can provide decent heat"
-   ✅ RIGHT: "5000 BTU heat output, which heats about 400 sq ft"
+WRONG VOICE:
+❌ "I got the Sideline Elite and I love it! The flames look so real..."
+❌ "Honestly I installed mine last month and couldn't be happier"
 
-5. MINIMUM REQUIREMENT:
-   Include AT LEAST 2 specific facts with exact numbers/names from the knowledge above.
-   Generic content without specific details will be rejected.
-
-6. SOUND NATURAL:
-   Work facts into conversational reply. Example:
-   "I got the Sideline Elite 50 for about $699 and the 60 flame colors are actually
-   pretty cool - the 5000 BTU heater keeps my 350 sq ft living room comfortable"
+RIGHT VOICE:
+✅ "The Sideline Elite 50 runs about $699 and puts out 5000 BTU of heat"
+✅ "Most customers go with the 50-inch for standard living rooms"
+✅ "You'll want at least 4 inches of recessed depth for this model"
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-Length: 100-300 words (natural paragraph breaks)
+LENGTH: Write 50-150 words in ONE paragraph. No line breaks unless absolutely necessary.
+Keep it concise and direct. Reddit users scroll fast.
 """
 
         return prompt
