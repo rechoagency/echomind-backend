@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List
 import logging
 import os
+import uuid
 from datetime import datetime
 from openai import AsyncOpenAI
 
