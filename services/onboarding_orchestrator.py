@@ -3,11 +3,12 @@ Onboarding Orchestrator - COMPLETE SYSTEM
 Coordinates all post-onboarding processing:
 1. File upload & vectorization
 2. AUTO_IDENTIFY subreddits & keywords
-3. Opportunity scoring
-4. Product matchback
-5. Voice analysis
-6. Content calendar generation
-7. Email notifications
+3. Website crawling for product knowledge (AUTOMATIC)
+4. Voice database building
+5. Opportunity scoring
+6. Product matchback
+7. Content calendar generation
+8. Email notifications
 """
 
 import os
@@ -83,7 +84,22 @@ class OnboardingOrchestrator:
                 else:
                     results["tasks_failed"].append("keyword_extraction")
 
-            # TASK 3: Build voice database for subreddits
+            # TASK 3: Crawl website for product knowledge (AUTOMATIC)
+            website_url = client.get("website_url") or client.get("website")
+            if website_url:
+                logger.info(f"🕷️ Crawling website for product knowledge: {website_url}")
+                crawl_results = await self._crawl_client_website(client)
+                results["website_crawl"] = crawl_results
+                if crawl_results.get("success"):
+                    results["tasks_completed"].append("website_crawl")
+                    logger.info(f"✅ Crawled {crawl_results.get('pages_crawled', 0)} pages, created {crawl_results.get('embeddings_created', 0)} knowledge chunks")
+                else:
+                    results["tasks_failed"].append("website_crawl")
+                    logger.warning(f"⚠️ Website crawl failed: {crawl_results.get('error', 'Unknown')}")
+            else:
+                logger.info("ℹ️ No website URL configured - skipping website crawl")
+
+            # TASK 4: Build voice database for subreddits
             logger.info("🎤 Building voice database...")
             voice_results = await self._build_voice_database(client_id)
             results["voice_database"] = voice_results
@@ -94,7 +110,7 @@ class OnboardingOrchestrator:
                 results["tasks_failed"].append("voice_database")
                 logger.warning(f"⚠️ Voice database partially failed: {voice_results.get('error', 'Unknown')}")
 
-            # TASK 4: Score existing opportunities
+            # TASK 5: Score existing opportunities
             logger.info("📊 Scoring opportunities...")
             scoring_results = await self._score_opportunities(client_id)
             results["opportunity_scoring"] = scoring_results
@@ -102,7 +118,7 @@ class OnboardingOrchestrator:
                 results["tasks_completed"].append("opportunity_scoring")
                 logger.info(f"✅ Scored {scoring_results.get('count', 0)} opportunities")
 
-            # TASK 5: Generate content calendar
+            # TASK 6: Generate content calendar
             logger.info("📅 Generating content calendar...")
             calendar_results = await self._generate_content_calendar(client)
             results["content_calendar"] = calendar_results
@@ -110,7 +126,7 @@ class OnboardingOrchestrator:
                 results["tasks_completed"].append("content_calendar")
                 logger.info(f"✅ Calendar generated with {calendar_results.get('items', 0)} items")
             
-            # TASK 6: Send welcome email
+            # TASK 7: Send welcome email
             logger.info("📧 Sending welcome email...")
             email_results = await self._send_welcome_email(client, calendar_results)
             results["email_notification"] = email_results
@@ -167,6 +183,37 @@ class OnboardingOrchestrator:
             }
         except Exception as e:
             logger.error(f"Voice database build error: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    async def _crawl_client_website(self, client: Dict) -> Dict:
+        """Crawl client's website to extract product knowledge for RAG"""
+        try:
+            from services.website_crawler_service import crawl_client_website
+
+            client_id = client.get("client_id")
+            website_url = client.get("website_url") or client.get("website")
+            company_name = client.get("company_name", "Unknown")
+            products = client.get("products", [])
+
+            if not website_url:
+                return {
+                    "success": False,
+                    "error": "No website URL configured"
+                }
+
+            result = await crawl_client_website(
+                supabase_client=self.supabase,
+                openai_api_key=self.openai_api_key,
+                client_id=client_id,
+                website_url=website_url,
+                company_name=company_name,
+                products=products
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Website crawl error: {str(e)}")
             return {"success": False, "error": str(e)}
 
     async def _score_opportunities(self, client_id: str) -> Dict:

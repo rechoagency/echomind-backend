@@ -2828,3 +2828,116 @@ async def ingest_product_catalog(client_id: str, background_tasks: BackgroundTas
     except Exception as e:
         logger.error(f"Product catalog ingestion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/crawl-website/{client_id}")
+async def crawl_website(client_id: str, background_tasks: BackgroundTasks):
+    """
+    Crawl a client's website to automatically extract product knowledge.
+
+    This endpoint:
+    1. Gets the client's website URL from their profile
+    2. Crawls relevant pages (products, specs, FAQs)
+    3. Uses GPT-4 to extract structured knowledge chunks
+    4. Creates embeddings and stores in document_embeddings
+
+    The crawl runs in the background - check results via /api/admin/client-knowledge/{client_id}
+
+    Example:
+    POST /api/admin/crawl-website/83a4fe57-4737-4dcf-b4bc-c9300686112f
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        client_data = client.data[0]
+        company_name = client_data.get('company_name', 'Unknown')
+        website_url = client_data.get('website_url', '')
+        products = client_data.get('products', [])
+
+        if not website_url:
+            return {
+                "success": False,
+                "error": "No website_url configured for this client",
+                "fix": "Update client record with website_url field"
+            }
+
+        # Import the crawler service
+        from services.website_crawler_service import crawl_client_website
+
+        # Run crawler in background for long operations
+        # For immediate testing, we run it directly
+        result = await crawl_client_website(
+            supabase_client=supabase,
+            openai_api_key=os.getenv('OPENAI_API_KEY'),
+            client_id=client_id,
+            website_url=website_url,
+            company_name=company_name,
+            products=products
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Website crawl failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/client-knowledge/{client_id}")
+async def get_client_knowledge(client_id: str):
+    """
+    Get all knowledge chunks stored for a client.
+
+    Returns embeddings from document_embeddings table with metadata.
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info
+        client = supabase.table("clients").select("company_name").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        company_name = client.data[0].get('company_name', 'Unknown')
+
+        # Get embeddings (without the actual embedding vectors for response size)
+        embeddings = supabase.table("document_embeddings")\
+            .select("id, document_id, chunk_text, chunk_index, metadata, created_at")\
+            .eq("client_id", client_id)\
+            .order("created_at", desc=True)\
+            .limit(100)\
+            .execute()
+
+        # Group by source
+        by_source = {}
+        for emb in embeddings.data or []:
+            source = (emb.get('metadata') or {}).get('source', 'unknown')
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append({
+                "id": emb.get('id'),
+                "title": (emb.get('metadata') or {}).get('title', 'Untitled'),
+                "category": (emb.get('metadata') or {}).get('category', 'unknown'),
+                "chunk_preview": emb.get('chunk_text', '')[:200] + "...",
+                "created_at": emb.get('created_at')
+            })
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "company_name": company_name,
+            "total_chunks": len(embeddings.data or []),
+            "by_source": by_source
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching client knowledge: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
