@@ -2742,8 +2742,10 @@ async def ingest_knowledge(request: IngestKnowledgeRequest):
                 embedding = response.data[0].embedding
 
                 # Store in document_embeddings
+                # Generate a synthetic document_id for manual ingestion (required by DB constraint)
+                synthetic_doc_id = str(uuid.uuid4())
                 embedding_record = {
-                    'document_id': None,  # No document - direct ingestion
+                    'document_id': synthetic_doc_id,  # Synthetic ID for direct ingestion
                     'client_id': request.client_id,
                     'chunk_text': full_text,
                     'chunk_index': idx,
