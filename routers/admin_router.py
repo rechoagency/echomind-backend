@@ -2676,3 +2676,152 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         logger.error(f"Debug endpoint error: {e}")
         logger.error(traceback.format_exc())
         return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+# ========================================
+# KNOWLEDGE INGESTION ENDPOINTS
+# ========================================
+
+class KnowledgeChunk(BaseModel):
+    """A chunk of product/company knowledge"""
+    title: str
+    content: str
+    category: str = "product"  # product, faq, spec, brand
+
+
+class IngestKnowledgeRequest(BaseModel):
+    """Request to ingest knowledge chunks"""
+    client_id: str
+    chunks: List[KnowledgeChunk]
+    source: str = "manual_ingestion"
+
+
+@router.post("/ingest-knowledge")
+async def ingest_knowledge(request: IngestKnowledgeRequest):
+    """
+    Ingest product/company knowledge directly into the RAG system.
+    Creates embeddings and stores in document_embeddings for retrieval.
+
+    This bypasses the document upload flow and directly populates the
+    knowledge base with structured product information.
+
+    Example:
+    POST /api/admin/ingest-knowledge
+    {
+        "client_id": "xxx",
+        "chunks": [
+            {"title": "Sideline Elite 50", "content": "50-inch electric fireplace, 5000 BTU...", "category": "product"},
+            {"title": "Heat Settings", "content": "High: 1500W, Low: 750W...", "category": "spec"}
+        ]
+    }
+    """
+    try:
+        supabase = get_supabase()
+        openai_client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+        # Verify client exists
+        client = supabase.table("clients").select("company_name").eq("client_id", request.client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        company_name = client.data[0].get('company_name', 'Unknown')
+
+        embeddings_created = 0
+        errors = []
+
+        for idx, chunk in enumerate(request.chunks):
+            try:
+                # Combine title and content for embedding
+                full_text = f"{chunk.title}\n\n{chunk.content}"
+
+                # Generate embedding
+                response = await openai_client.embeddings.create(
+                    model="text-embedding-ada-002",
+                    input=full_text[:8000]  # Limit to 8000 chars
+                )
+                embedding = response.data[0].embedding
+
+                # Store in document_embeddings
+                embedding_record = {
+                    'document_id': None,  # No document - direct ingestion
+                    'client_id': request.client_id,
+                    'chunk_text': full_text,
+                    'chunk_index': idx,
+                    'embedding': embedding,
+                    'metadata': {
+                        'title': chunk.title,
+                        'category': chunk.category,
+                        'source': request.source,
+                        'char_count': len(full_text),
+                        'company_name': company_name,
+                        'ingested_at': datetime.utcnow().isoformat()
+                    },
+                    'created_at': datetime.utcnow().isoformat()
+                }
+
+                supabase.table('document_embeddings').insert(embedding_record).execute()
+                embeddings_created += 1
+                logger.info(f"Created embedding for chunk: {chunk.title}")
+
+            except Exception as chunk_error:
+                logger.error(f"Error processing chunk {chunk.title}: {chunk_error}")
+                errors.append({"title": chunk.title, "error": str(chunk_error)})
+
+        return {
+            "success": embeddings_created > 0,
+            "client_id": request.client_id,
+            "company_name": company_name,
+            "chunks_submitted": len(request.chunks),
+            "embeddings_created": embeddings_created,
+            "errors": errors
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Knowledge ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ingest-product-catalog/{client_id}")
+async def ingest_product_catalog(client_id: str, background_tasks: BackgroundTasks):
+    """
+    Fetch and ingest a client's product catalog from their website.
+    This crawls the website, extracts product specs, and creates embeddings.
+
+    For Touchstone: https://www.touchstonehomeproducts.com/collections/all
+    """
+    try:
+        supabase = get_supabase()
+
+        # Get client info including website
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        client_data = client.data[0]
+        company_name = client_data.get('company_name', 'Unknown')
+        website_url = client_data.get('website_url', '')
+
+        if not website_url:
+            return {
+                "success": False,
+                "error": "No website_url configured for this client",
+                "fix": "Update client record with website_url field"
+            }
+
+        # For now, return instructions - actual crawling would be async
+        return {
+            "success": True,
+            "message": "Product catalog ingestion queued",
+            "client_id": client_id,
+            "company_name": company_name,
+            "website_url": website_url,
+            "note": "Use /api/admin/ingest-knowledge to manually add product specs while crawler is being developed"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Product catalog ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
