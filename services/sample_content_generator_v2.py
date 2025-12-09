@@ -278,20 +278,136 @@ Hope that helps!"""
             return "Implicit interest signals present"
     
     def _analyze_voice_match(self, content: str) -> str:
-        """Analyze voice similarity to brand"""
-        if len(content) > 200:
-            return "Natural conversational flow without formulaic structure, uses personal experience tone, practical advice without rigid formatting"
+        """
+        Analyze voice similarity to brand with DETAILED, SPECIFIC proof.
+
+        Returns a comprehensive breakdown showing WHY the content matches
+        the target voice, with specific examples from the generated text.
+        """
+        content_lower = content.lower()
+
+        # Analyze specific voice characteristics
+        analysis_points = []
+
+        # 1. Sentence Structure Analysis
+        sentences = [s.strip() for s in content.split('.') if s.strip()]
+        avg_words = sum(len(s.split()) for s in sentences) / max(len(sentences), 1)
+        if avg_words < 15:
+            analysis_points.append(f"SHORT SENTENCES (avg {avg_words:.0f} words) = casual Reddit style")
+        elif avg_words < 25:
+            analysis_points.append(f"MEDIUM SENTENCES (avg {avg_words:.0f} words) = balanced conversational")
         else:
-            return "Concise, direct style matching community norms"
+            analysis_points.append(f"LONGER SENTENCES (avg {avg_words:.0f} words) = detailed/educational")
+
+        # 2. Casual Language Markers
+        casual_markers = {
+            'honestly': 'authentic personal framing',
+            'literally': 'emphasis style common in subreddit',
+            'actually': 'conversational correction tone',
+            'basically': 'simplification for accessibility',
+            'just': 'casual minimizer',
+            'pretty': 'hedging language',
+            'super': 'enthusiastic modifier',
+            'really': 'emphasis marker',
+            'gonna': 'casual contraction',
+            'kinda': 'informal hedging',
+            'tbh': 'text-speak authenticity',
+            'imo': 'opinion marker',
+            'lol': 'humor/lightness',
+            'haha': 'friendly tone'
+        }
+
+        found_markers = []
+        for marker, meaning in casual_markers.items():
+            if marker in content_lower:
+                found_markers.append(f"'{marker}' ({meaning})")
+
+        if found_markers:
+            analysis_points.append(f"CASUAL MARKERS: {', '.join(found_markers[:3])}")
+
+        # 3. Personal Experience Indicators
+        personal_phrases = ['i ', "i've", "i'm", 'my ', 'me ', 'myself', 'personally', 'my experience']
+        personal_count = sum(1 for p in personal_phrases if p in content_lower)
+        if personal_count >= 3:
+            analysis_points.append("STRONG PERSONAL VOICE: multiple first-person references = authentic sharing")
+        elif personal_count >= 1:
+            analysis_points.append("PERSONAL TOUCH: first-person language creates relatability")
+
+        # 4. Empathy Markers
+        empathy_phrases = ['understand', 'feel', 'been there', 'same thing', 'get it', 'know how', 'tough', 'hard']
+        empathy_found = [p for p in empathy_phrases if p in content_lower]
+        if empathy_found:
+            analysis_points.append(f"EMPATHY SIGNALS: {', '.join(empathy_found[:2])} = emotional connection")
+
+        # 5. Anti-AI Patterns (what it DOESN'T have)
+        ai_red_flags = ['furthermore', 'additionally', 'in conclusion', 'to summarize', 'it is important to note']
+        has_ai_patterns = any(flag in content_lower for flag in ai_red_flags)
+        if not has_ai_patterns:
+            analysis_points.append("NO AI RED FLAGS: avoids corporate/robotic language patterns")
+
+        # 6. Formatting Style
+        has_bullet_lists = content.count('•') > 0 or content.count('-') > 2
+        has_short_paragraphs = content.count('\n\n') >= 1
+
+        if not has_bullet_lists and has_short_paragraphs:
+            analysis_points.append("NATURAL FORMATTING: paragraph breaks without rigid listicles")
+        elif not has_bullet_lists:
+            analysis_points.append("FLOWING PROSE: single-block conversational style")
+
+        # 7. Extract actual phrases as proof
+        sample_phrases = []
+        for sentence in sentences[:3]:
+            if len(sentence) > 20 and len(sentence) < 100:
+                sample_phrases.append(f'"{sentence[:50]}..."')
+
+        if sample_phrases:
+            analysis_points.append(f"SAMPLE VOICE: {sample_phrases[0]}")
+
+        # Build comprehensive proof
+        if len(analysis_points) >= 4:
+            return " | ".join(analysis_points[:5])
+        elif len(analysis_points) >= 2:
+            return " | ".join(analysis_points)
+        else:
+            return "Conversational tone with community-appropriate language and natural flow"
     
     def _determine_tone(self, content: str) -> str:
-        """Determine tone of content"""
-        if 'help' in content.lower():
-            return "Helpful friend"
-        elif 'experience' in content.lower():
-            return "Experienced advisor"
+        """
+        Determine tone of content with detailed analysis.
+
+        Returns specific tone descriptors based on linguistic markers.
+        """
+        content_lower = content.lower()
+        tones = []
+
+        # Check for different tone markers
+        if any(w in content_lower for w in ['help', 'hope this helps', 'let me know']):
+            tones.append("Helpful")
+
+        if any(w in content_lower for w in ['experience', "i've been", 'i used', 'i tried', 'worked for me']):
+            tones.append("Experiential")
+
+        if any(w in content_lower for w in ['honestly', 'tbh', 'real talk', 'truth is']):
+            tones.append("Candid")
+
+        if any(w in content_lower for w in ['understand', 'get it', 'feel you', 'same boat', 'been there']):
+            tones.append("Empathetic")
+
+        if any(w in content_lower for w in ['!', 'love', 'amazing', 'great', 'awesome']):
+            tones.append("Enthusiastic")
+
+        if any(w in content_lower for w in ['consider', 'might want', 'could try', 'one option']):
+            tones.append("Advisory")
+
+        if any(w in content_lower for w in ['?', 'depends', 'it varies', 'ymmv']):
+            tones.append("Nuanced")
+
+        if len(tones) >= 2:
+            return f"{tones[0]} + {tones[1]} blend"
+        elif len(tones) == 1:
+            return f"{tones[0]} community voice"
         else:
-            return "Practical, supportive"
+            return "Balanced conversational"
     
     def _extract_product_mention(self, content: str, client: Dict) -> str:
         """Extract mentioned product"""
