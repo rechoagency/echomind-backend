@@ -404,23 +404,45 @@ User's Situation (based on post history):
 """
 
         prompt += """
-=== CONTENT REQUIREMENTS ===
-Write a response that:
-1. Sounds like a real person who's been through this
-2. Is genuinely helpful without being preachy
-3. Includes the realistic typos specified
-4. Matches the subreddit's voice perfectly
-5. Feels like a 2am text to a friend, not a blog post
-6. MUST include at least 2 SPECIFIC facts/numbers from above (dimensions, prices, specs, etc.)
-7. AVOID generic advice - be SPECIFIC with actual product details
+═══════════════════════════════════════════════════════════════════════════════
+HARD RULES FOR CONTENT (VIOLATION = CONTENT REJECTED)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. COPY EXACT NUMBERS FROM KNOWLEDGE ABOVE:
+   - If specs say "$549" → use "$549", NOT "affordable"
+   - If specs say "5000 BTU" → use "5000 BTU", NOT "good heat"
+   - If specs say "60 flame colors" → use "60 flame colors", NOT "many colors"
+
+2. USE SPECIFIC MODEL NAMES:
+   - If knowledge mentions "Sideline Elite 50" → use that exact name
+   - NEVER say "one model" or "certain products" when you have the name
+
+3. QUOTE DIMENSIONS PRECISELY:
+   - If knowledge says "50 inches wide" → include "50 inches"
+   - NEVER say "fits most spaces" when you have exact measurements
+
+4. NEVER GENERALIZE SPECIFICS:
+   ❌ WRONG: "some models offer multiple flame options"
+   ✅ RIGHT: "the Sideline Elite has 60 flame color combinations"
+
+   ❌ WRONG: "they make quality products at different price points"
+   ✅ RIGHT: "the Forte 40 is $549 and the Sideline Elite 50 is around $699"
+
+   ❌ WRONG: "electric fireplaces can provide decent heat"
+   ✅ RIGHT: "5000 BTU heat output, which heats about 400 sq ft"
+
+5. MINIMUM REQUIREMENT:
+   Include AT LEAST 2 specific facts with exact numbers/names from the knowledge above.
+   Generic content without specific details will be rejected.
+
+6. SOUND NATURAL:
+   Work facts into conversational reply. Example:
+   "I got the Sideline Elite 50 for about $699 and the 60 flame colors are actually
+   pretty cool - the 5000 BTU heater keeps my 350 sq ft living room comfortable"
+
+═══════════════════════════════════════════════════════════════════════════════
 
 Length: 100-300 words (natural paragraph breaks)
-
-IMPORTANT: Generic fluffy content is NOT acceptable. Include SPECIFIC details like:
-- Exact dimensions (e.g., "50 inches wide")
-- Specific features (e.g., "60+ flame color options")
-- Real numbers (e.g., "5000 BTU heat output")
-- Actual model names (e.g., "Sideline Elite 50")
 """
 
         return prompt

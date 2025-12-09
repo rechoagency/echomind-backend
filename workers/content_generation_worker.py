@@ -587,12 +587,41 @@ Subreddit: r/{subreddit}
 Title: {thread_title}
 Original post: {thread_content[:1500] if thread_content else '[No content]'}
 
-{f'''PRODUCT KNOWLEDGE - YOU MUST USE THESE FACTS:
+{f'''═══════════════════════════════════════════════════════════════════════════════
+KNOWLEDGE BASE FACTS - MANDATORY USAGE RULES
+═══════════════════════════════════════════════════════════════════════════════
+
+RAW FACTS FROM KNOWLEDGE BASE:
 {knowledge_text}
 
-IMPORTANT: Include at least ONE specific fact from the knowledge above.
-Use exact numbers, model names, dimensions, or features when relevant.
-DO NOT make up specifications - only use what's provided above.''' if has_knowledge else ""}
+HARD RULES FOR FACT USAGE (VIOLATION = CONTENT REJECTED):
+
+1. COPY EXACT NUMBERS: If the knowledge says "$549" or "5000 BTU" or "60 flame colors",
+   use those EXACT numbers. Do NOT paraphrase "affordable" or "many colors".
+
+2. USE SPECIFIC MODEL NAMES: If the knowledge mentions "Sideline Elite 50" or "Forte 40",
+   use those exact names. Do NOT say "one model" or "certain units".
+
+3. QUOTE DIMENSIONS PRECISELY: If knowledge says "50 inches wide" or "recessed 4 inches",
+   include those exact measurements. Do NOT say "fits most spaces".
+
+4. NEVER GENERALIZE SPECIFICS:
+   ❌ WRONG: "some models offer multiple flame options"
+   ✅ RIGHT: "the Sideline Elite has 60 flame color combinations"
+
+   ❌ WRONG: "they make quality products at different price points"
+   ✅ RIGHT: "the Forte 40 is $549 and the Sideline Elite 50 is around $699"
+
+   ❌ WRONG: "electric fireplaces can provide decent heat"
+   ✅ RIGHT: "5000 BTU heat output, which heats about 400 sq ft"
+
+5. MINIMUM REQUIREMENT: Include AT LEAST 2 specific facts with exact numbers/names
+   from the knowledge above. Generic content without specific details will be rejected.
+
+6. SOUND NATURAL: Work these facts into a conversational reply. Example:
+   "I got the Sideline Elite 50 for about $699 and the 60 flame colors are actually
+   pretty cool - the 5000 BTU heater keeps my 350 sq ft living room comfortable"
+''' if has_knowledge else ""}
 
 BRAND CONTEXT: {brand_context}
 
