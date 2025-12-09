@@ -69,14 +69,16 @@ class KnowledgeMatchbackService:
             logger.info(f"Searching knowledge base for client {client_id} with threshold {similarity_threshold}")
             
             # Use Supabase RPC for vector similarity search
-            # Note: This uses the PostgreSQL function `match_knowledge_embeddings`
-            # Parameters must match the function signature exactly
+            # PostgreSQL function signature: match_knowledge_embeddings(
+            #   query_embedding vector(1536), client_id uuid,
+            #   similarity_threshold float, match_count int
+            # )
             response = self.supabase.rpc(
                 'match_knowledge_embeddings',
                 {
                     'query_embedding': embedding,
-                    'match_client_id': client_id,  # Correct parameter name
-                    'match_threshold': similarity_threshold,  # Correct parameter name
+                    'client_id': client_id,
+                    'similarity_threshold': similarity_threshold,
                     'match_count': max_insights
                 }
             ).execute()
