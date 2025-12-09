@@ -40,7 +40,7 @@ class EnhancedContentGenerator:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = "gpt-4-turbo"  # Best model for human-like writing
+        self.model = "gpt-4o"  # Best model for human-like writing
     
     async def generate_content(
         self,

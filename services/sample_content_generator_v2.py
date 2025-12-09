@@ -243,7 +243,7 @@ Write a 3-4 paragraph helpful reply that:
 Reply:"""
             
             response = self.openai.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.8,
                 max_tokens=300

@@ -75,10 +75,10 @@ def check_for_replies(post_id, subreddit_name):
 
 
 def generate_reply(original_post_text, comment_text, company_name, products):
-    """Generate reply using GPT-4"""
+    """Generate reply using GPT-4o"""
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[{
                 "role": "system",
                 "content": f"""You are a helpful community member responding to questions about {company_name}.

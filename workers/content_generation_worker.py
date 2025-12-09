@@ -340,7 +340,7 @@ class ContentGenerationWorker:
         """Call OpenAI API with automatic retry and exponential backoff."""
         try:
             response = self.openai.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",  # Upgraded from gpt-4 for better performance
                 messages=[
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": "Please write the response now."}
