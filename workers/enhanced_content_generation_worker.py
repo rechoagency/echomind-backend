@@ -24,6 +24,12 @@ from openai import OpenAI, AsyncOpenAI
 
 from database import get_supabase_client
 
+# Post-processing to fix GPT violations
+try:
+    from utils.content_cleaner import clean_content
+except ImportError:
+    clean_content = None  # Will work without if not available
+
 logger = logging.getLogger(__name__)
 
 class EnhancedContentGenerator:
@@ -551,8 +557,13 @@ End naturally - no call to action, no "hope this helps", no summary.
             )
             
             content = response.choices[0].message.content.strip()
+
+            # Post-process to fix GPT violations (banned phrases, contractions, etc.)
+            if clean_content:
+                content = clean_content(content)
+
             return content
-            
+
         except Exception as e:
             logger.error(f"GPT-4 generation failed: {e}")
             raise

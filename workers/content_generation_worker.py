@@ -21,6 +21,12 @@ try:
 except ImportError:
     inject_link_naturally = None  # Will log warning after logger is configured
 
+# Post-processing to fix GPT violations
+try:
+    from utils.content_cleaner import clean_content
+except ImportError:
+    clean_content = None  # Will work without if not available
+
 # Add parent directory to path for service imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.profile_rotation_service import ProfileRotationService
@@ -348,7 +354,12 @@ class ContentGenerationWorker:
                 temperature=0.8,
                 max_tokens=max_tokens
             )
-            return response.choices[0].message.content.strip()
+            raw_content = response.choices[0].message.content.strip()
+
+            # Post-process to fix GPT violations (banned phrases, contractions, etc.)
+            if clean_content:
+                return clean_content(raw_content)
+            return raw_content
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
             raise

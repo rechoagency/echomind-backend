@@ -9,6 +9,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 import io
 
+# Post-processing to fix GPT violations
+try:
+    from utils.content_cleaner import clean_content
+except ImportError:
+    clean_content = None  # Will work without if not available
+
 logger = logging.getLogger(__name__)
 
 
@@ -248,8 +254,13 @@ Reply:"""
                 temperature=0.8,
                 max_tokens=300
             )
-            
-            return response.choices[0].message.content.strip()
+
+            raw_content = response.choices[0].message.content.strip()
+
+            # Post-process to fix GPT violations (banned phrases, contractions, etc.)
+            if clean_content:
+                return clean_content(raw_content)
+            return raw_content
         
         except Exception as e:
             logger.error(f"AI generation error: {e}")
