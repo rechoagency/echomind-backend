@@ -12,10 +12,18 @@ import io
 # Post-processing to fix GPT violations
 try:
     from utils.content_cleaner import clean_content
-except ImportError:
-    clean_content = None  # Will work without if not available
+    _content_cleaner_loaded = True
+except ImportError as e:
+    clean_content = None
+    _content_cleaner_loaded = False
 
 logger = logging.getLogger(__name__)
+
+# Log content cleaner status at module load
+if _content_cleaner_loaded:
+    logger.info("Content cleaner loaded successfully - GPT output will be post-processed")
+else:
+    logger.warning("Content cleaner NOT available - GPT output will NOT be cleaned for contractions")
 
 
 class SampleContentGeneratorV2:
@@ -259,15 +267,18 @@ Reply:"""
 
             # Post-process to fix GPT violations (banned phrases, contractions, etc.)
             if clean_content:
-                return clean_content(raw_content)
-            return raw_content
+                logger.info(f"Cleaning GPT content ({len(raw_content)} chars)")
+                cleaned = clean_content(raw_content)
+                logger.info(f"Content cleaned ({len(cleaned)} chars)")
+                return cleaned
+            else:
+                logger.warning("Content cleaner unavailable - returning raw GPT output")
+                return raw_content
         
         except Exception as e:
             logger.error(f"AI generation error: {e}")
-            # Fallback template
-            return f"""That's a great question. 
-
-I've dealt with this before and found that focusing on quality over quick fixes makes a huge difference.
+            # Fallback template (uses contractions, no banned phrases)
+            return f"""I've dealt with this before and found that focusing on quality over quick fixes makes a huge difference.
 
 {client.get('website', 'Check out reliable resources')} has some helpful options if you want to explore further.
 
