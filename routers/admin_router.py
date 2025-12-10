@@ -2270,19 +2270,52 @@ async def generate_content_excel(
 
         # Get opportunities with scoring data - sort by composite_score DESC (best first)
         # composite_score is the pre-calculated weighted score from opportunity_scoring_worker
+        # Fetch 10x the limit to ensure enough unique threads after deduplication
+        fetch_limit = limit * 10
         opps_response = supabase.table("opportunities")\
             .select("*")\
             .eq("client_id", client_id)\
             .not_.is_("composite_score", "null")\
             .order("composite_score", desc=True)\
-            .limit(limit)\
+            .limit(fetch_limit)\
             .execute()
 
         if not opps_response.data:
             raise HTTPException(status_code=404, detail="No scored opportunities found for this client")
 
-        opportunities = opps_response.data
-        logger.info(f"📊 Found {len(opportunities)} opportunities (sorted by composite_score DESC)")
+        raw_opportunities = opps_response.data
+        logger.info(f"📊 Fetched {len(raw_opportunities)} raw opportunities (sorted by composite_score DESC)")
+
+        # Deduplicate by thread URL - keep highest scoring opportunity per thread
+        # Also enforce subreddit diversity (max 4 per subreddit)
+        MAX_PER_SUBREDDIT = 4
+        seen_threads = set()
+        subreddit_counts = {}
+        opportunities = []
+
+        for opp in raw_opportunities:
+            # Get thread identifier (use thread_url, post_url, or reddit_post_id)
+            thread_url = opp.get('thread_url') or opp.get('post_url') or opp.get('reddit_post_id')
+            subreddit = (opp.get('subreddit') or '').lower()
+
+            # Skip if we've already seen this thread
+            if thread_url in seen_threads:
+                continue
+
+            # Skip if this subreddit already has max opportunities
+            if subreddit_counts.get(subreddit, 0) >= MAX_PER_SUBREDDIT:
+                continue
+
+            # Add this opportunity
+            seen_threads.add(thread_url)
+            subreddit_counts[subreddit] = subreddit_counts.get(subreddit, 0) + 1
+            opportunities.append(opp)
+
+            # Stop when we have enough
+            if len(opportunities) >= limit:
+                break
+
+        logger.info(f"📊 After deduplication: {len(opportunities)} unique threads from {len(subreddit_counts)} subreddits")
 
         # Build opportunity lookup map for scoring data
         opp_lookup = {opp.get('opportunity_id'): opp for opp in opportunities}
