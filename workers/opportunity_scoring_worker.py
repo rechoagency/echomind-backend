@@ -875,8 +875,9 @@ def score_opportunities_batched(
     """
     Score opportunities in batches to avoid database timeouts.
 
-    This function uses cursor-based pagination to process opportunities
-    in smaller chunks, preventing timeouts for clients with many opportunities.
+    This function uses a two-stage approach to prevent timeouts:
+    1. First fetch only opportunity_ids (fast, minimal data)
+    2. Then fetch full records one-by-one and score them
 
     Args:
         client_id: The client ID to score opportunities for
@@ -905,68 +906,78 @@ def score_opportunities_batched(
 
     while batches_run < max_batches:
         try:
-            # Build query - use cursor-based pagination with offset
-            offset = batches_run * batch_size
-
+            # STAGE 1: Fetch only IDs (fast query, minimal data transfer)
+            # This avoids the statement timeout when selecting all columns
             if force_rescore:
-                # Get all opportunities, ordered by created_at for consistent pagination
-                query = supabase.table("opportunities")\
-                    .select("*")\
+                # Get all opportunity IDs
+                id_query = supabase.table("opportunities")\
+                    .select("opportunity_id")\
                     .eq("client_id", client_id)\
                     .order("created_at", desc=True)\
-                    .range(offset, offset + batch_size - 1)
+                    .range(batches_run * batch_size, (batches_run + 1) * batch_size - 1)
             else:
-                # Only get unscored opportunities
-                query = supabase.table("opportunities")\
-                    .select("*")\
+                # Only get unscored opportunity IDs
+                id_query = supabase.table("opportunities")\
+                    .select("opportunity_id")\
                     .eq("client_id", client_id)\
                     .is_("composite_score", "null")\
                     .order("created_at", desc=True)\
                     .limit(batch_size)
 
-            batch = query.execute()
+            id_result = id_query.execute()
 
-            if not batch.data:
+            if not id_result.data:
                 logger.info(f"No more opportunities to score after {batches_run} batches")
+                break
+
+            opp_ids = [r.get("opportunity_id") for r in id_result.data if r.get("opportunity_id")]
+            logger.info(f"Batch {batches_run + 1}: Found {len(opp_ids)} opportunity IDs to process")
+
+            if not opp_ids:
                 break
 
             batch_processed = 0
             batch_excluded = 0
             batch_errors = 0
 
-            logger.info(f"Batch {batches_run + 1}: Processing {len(batch.data)} opportunities")
-
-            for opp in batch.data:
+            # STAGE 2: Fetch and score each opportunity individually
+            for opp_id in opp_ids:
                 try:
+                    # Fetch full record for this single opportunity
+                    opp_result = supabase.table("opportunities")\
+                        .select("*")\
+                        .eq("opportunity_id", opp_id)\
+                        .limit(1)\
+                        .execute()
+
+                    if not opp_result.data:
+                        batch_errors += 1
+                        continue
+
+                    opp = opp_result.data[0]
+
                     # Calculate all scores
                     scores = worker.score_opportunity(opp, brand_config)
-
-                    opp_id = opp.get("opportunity_id") or opp.get("id")
 
                     if scores is None or scores.get('excluded'):
                         batch_excluded += 1
                         # Mark as excluded
-                        if opp_id:
-                            try:
-                                exclude_data = {
-                                    "composite_score": 0,
-                                    "opportunity_score": 0,
-                                    "priority_tier": "EXCLUDED",
-                                    "scoring_debug": {
-                                        "excluded": True,
-                                        "reason": scores.get('exclude_reason', 'Unknown') if scores else 'No scores',
-                                        "scored_at": datetime.utcnow().isoformat()
-                                    },
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }
-                                if opp.get("opportunity_id"):
-                                    supabase.table("opportunities").update(exclude_data)\
-                                        .eq("opportunity_id", opp_id).execute()
-                                else:
-                                    supabase.table("opportunities").update(exclude_data)\
-                                        .eq("id", opp_id).execute()
-                            except Exception:
-                                pass
+                        try:
+                            exclude_data = {
+                                "composite_score": 0,
+                                "opportunity_score": 0,
+                                "priority_tier": "EXCLUDED",
+                                "scoring_debug": {
+                                    "excluded": True,
+                                    "reason": scores.get('exclude_reason', 'Unknown') if scores else 'No scores',
+                                    "scored_at": datetime.utcnow().isoformat()
+                                },
+                                "updated_at": datetime.utcnow().isoformat()
+                            }
+                            supabase.table("opportunities").update(exclude_data)\
+                                .eq("opportunity_id", opp_id).execute()
+                        except Exception:
+                            pass
                         continue
 
                     # Update database with scores
@@ -982,20 +993,16 @@ def score_opportunities_batched(
                         "updated_at": datetime.utcnow().isoformat()
                     }
 
-                    if opp.get("opportunity_id"):
-                        supabase.table("opportunities").update(update_data)\
-                            .eq("opportunity_id", opp_id).execute()
-                    else:
-                        supabase.table("opportunities").update(update_data)\
-                            .eq("id", opp_id).execute()
+                    supabase.table("opportunities").update(update_data)\
+                        .eq("opportunity_id", opp_id).execute()
 
                     batch_processed += 1
 
                 except Exception as e:
                     batch_errors += 1
                     if last_error is None:
-                        last_error = f"{opp.get('opportunity_id', opp.get('id'))}: {str(e)}"
-                    logger.error(f"Error scoring opportunity: {e}")
+                        last_error = f"{opp_id}: {str(e)}"
+                    logger.error(f"Error scoring opportunity {opp_id}: {e}")
 
             total_processed += batch_processed
             total_excluded += batch_excluded
@@ -1004,8 +1011,8 @@ def score_opportunities_batched(
 
             logger.info(f"Batch {batches_run} complete: {batch_processed} processed, {batch_excluded} excluded, {batch_errors} errors")
 
-            # If we got fewer than batch_size, we're done
-            if len(batch.data) < batch_size:
+            # If we got fewer than batch_size IDs, we're done
+            if len(opp_ids) < batch_size:
                 break
 
         except Exception as e:
@@ -1044,7 +1051,7 @@ def score_opportunities_batched(
         "total_excluded": total_excluded,
         "total_errors": total_errors,
         "more_remaining": more_remaining,
-        "scoring_version": "v3.0_reddit_optimized_batched",
+        "scoring_version": "v3.1_two_stage_batched",
         "message": f"Processed {total_processed} opportunities in {batches_run} batches"
     }
 
