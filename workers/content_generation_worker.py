@@ -356,9 +356,8 @@ class ContentGenerationWorker:
             )
             raw_content = response.choices[0].message.content.strip()
 
-            # Post-process to fix GPT violations (banned phrases, contractions, etc.)
-            if clean_content:
-                return clean_content(raw_content)
+            # NOTE: clean_content is now called AFTER vary_contractions in generate_content_for_client
+            # This ensures that any expanded contractions from vary_contractions are properly fixed
             return raw_content
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
@@ -425,7 +424,7 @@ class ContentGenerationWorker:
         # Grammar patterns
         "capitalization_style": "mixed",
         "lowercase_start_pct": 25,
-        "contraction_rate": 5.0,
+        "contraction_rate": 85.0,  # High rate = keep contractions (don't expand)
 
         # Lexical patterns - DYNAMIC (learned from actual subreddit data)
         "common_phrases": ["honestly", "in my experience", "typically", "depends on"],
@@ -896,6 +895,13 @@ OUTPUT ONLY THE REPLY TEXT - nothing else."""
                     if typo_count > 0:
                         content_text = self.inject_typos(content_text, typo_count)
                         logger.info(f"      📝 Injected {typo_count} typo(s) for casual tone")
+
+                    # FINAL STEP: Apply clean_content to fix any remaining violations
+                    # This runs AFTER vary_contractions to ensure contractions are enforced
+                    # regardless of voice profile contraction_rate settings
+                    if clean_content:
+                        content_text = clean_content(content_text)
+                        logger.info(f"      🧹 Applied content cleaner (contractions + banned phrases)")
 
                 # STEP 8.6: Generate voice similarity proof
                 voice_similarity_proof = self.generate_voice_similarity_proof(
