@@ -915,8 +915,9 @@ def score_opportunities_batched(
         try:
             # Simple query: just fetch a small batch by client_id
             # Use cursor-based pagination to avoid offset which is slow on large tables
+            # Use SELECT * to get all available columns - the scoring function handles missing columns gracefully
             query = supabase.table("opportunities")\
-                .select("opportunity_id, composite_score, thread_title, original_post_text, thread_content, thread_body, subreddit, thread_created_at, date_posted, comment_count, num_comments, thread_num_comments, score, upvotes, thread_score, is_locked, removed")\
+                .select("*")\
                 .eq("client_id", client_id)\
                 .order("opportunity_id")\
                 .limit(batch_size)
