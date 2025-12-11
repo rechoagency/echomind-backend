@@ -684,21 +684,46 @@ async def test_content_generation_sync(request: TestContentRequest = None):
 
 
 @router.post("/run-opportunity-scoring")
-async def run_opportunity_scoring(client_id: str = None, force_rescore: bool = False):
+async def run_opportunity_scoring(
+    client_id: str = None,
+    force_rescore: bool = False,
+    batch_size: int = 100,
+    max_batches: int = 10
+):
     """
     Manually trigger opportunity scoring for all or specific client.
+
+    Uses batched processing to avoid database timeouts for clients with many opportunities.
 
     Args:
         client_id: Optional client ID to score (scores all if not provided)
         force_rescore: If True, re-scores ALL opportunities even if already scored
+        batch_size: Number of opportunities per batch (default 100, max 500)
+        max_batches: Maximum number of batches to process (default 10, max 50)
     """
     try:
-        logger.info(f"🎯 Starting opportunity scoring (client_id: {client_id or 'all'}, force_rescore: {force_rescore})")
+        # Enforce limits
+        batch_size = min(max(10, batch_size), 500)
+        max_batches = min(max(1, max_batches), 50)
 
-        from workers.opportunity_scoring_worker import OpportunityScoringWorker
+        logger.info(f"🎯 Starting opportunity scoring (client_id: {client_id or 'all'}, force_rescore: {force_rescore}, batch_size: {batch_size}, max_batches: {max_batches})")
 
-        worker = OpportunityScoringWorker()
-        result = worker.process_all_opportunities(client_id, force_rescore=force_rescore)
+        if client_id:
+            # Use batched scoring for specific client
+            from workers.opportunity_scoring_worker import score_opportunities_batched
+
+            result = score_opportunities_batched(
+                client_id=client_id,
+                batch_size=batch_size,
+                max_batches=max_batches,
+                force_rescore=force_rescore
+            )
+        else:
+            # For all clients, use the original method (with its own internal batching)
+            from workers.opportunity_scoring_worker import OpportunityScoringWorker
+
+            worker = OpportunityScoringWorker()
+            result = worker.process_all_opportunities(client_id, force_rescore=force_rescore)
 
         logger.info(f"🎯 Scoring complete: {result}")
 
@@ -706,6 +731,8 @@ async def run_opportunity_scoring(client_id: str = None, force_rescore: bool = F
             "success": True,
             "action": "opportunity_scoring",
             "client_id": client_id,
+            "batch_size": batch_size,
+            "max_batches": max_batches,
             "result": result
         }
 
@@ -2626,6 +2653,9 @@ async def debug_scored_opportunities(client_id: str, limit: int = 5):
         supabase = get_supabase()
         if not supabase:
             return {"error": "Supabase client not available"}
+
+        # HARD LIMIT: Never query more than 100 to prevent timeouts
+        limit = min(limit, 100)
 
         # Get all columns to see what's available
         all_opps = supabase.table("opportunities")\
