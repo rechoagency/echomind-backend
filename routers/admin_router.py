@@ -2974,3 +2974,181 @@ async def get_client_knowledge(client_id: str):
     except Exception as e:
         logger.error(f"Error fetching client knowledge: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug-reddit-scan/{client_id}")
+async def debug_reddit_scan(client_id: str, limit_subreddits: int = 3, limit_posts: int = 20):
+    """
+    Debug endpoint to test Reddit scanning synchronously and return detailed results.
+
+    Tests:
+    1. Reddit API connection
+    2. Subreddit accessibility
+    3. Keyword matching
+    4. Post discovery within 48-hour window
+
+    Args:
+        client_id: The client UUID
+        limit_subreddits: Max subreddits to test (default 3)
+        limit_posts: Max posts per subreddit (default 20)
+    """
+    import praw
+    from datetime import datetime
+
+    try:
+        supabase = get_supabase()
+
+        # Get client config
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        client_data = client.data[0]
+        company_name = client_data.get("company_name")
+        subreddits = client_data.get("target_subreddits", [])
+        keywords = client_data.get("target_keywords", [])
+
+        results = {
+            "client_id": client_id,
+            "company_name": company_name,
+            "config": {
+                "subreddits_configured": len(subreddits),
+                "keywords_configured": len(keywords),
+                "sample_subreddits": subreddits[:5],
+                "sample_keywords": keywords[:10]
+            },
+            "reddit_test": {},
+            "subreddit_tests": [],
+            "summary": {}
+        }
+
+        if not subreddits:
+            results["error"] = "No subreddits configured"
+            return results
+
+        if not keywords:
+            results["error"] = "No keywords configured"
+            return results
+
+        # Test Reddit connection
+        try:
+            reddit = praw.Reddit(
+                client_id=os.getenv("REDDIT_CLIENT_ID"),
+                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                user_agent=os.getenv("REDDIT_USER_AGENT", "EchoMind/1.0")
+            )
+            # Test API by getting a subreddit
+            test_sub = reddit.subreddit("all")
+            _ = test_sub.display_name  # Force API call
+            results["reddit_test"] = {
+                "status": "connected",
+                "client_id_present": bool(os.getenv("REDDIT_CLIENT_ID")),
+                "client_secret_present": bool(os.getenv("REDDIT_CLIENT_SECRET"))
+            }
+        except Exception as e:
+            results["reddit_test"] = {
+                "status": "failed",
+                "error": str(e),
+                "client_id_present": bool(os.getenv("REDDIT_CLIENT_ID")),
+                "client_secret_present": bool(os.getenv("REDDIT_CLIENT_SECRET"))
+            }
+            return results
+
+        # Test each subreddit
+        total_posts_found = 0
+        total_posts_48h = 0
+        total_matches = 0
+        sample_matches = []
+
+        for sub_name in subreddits[:limit_subreddits]:
+            sub_name_clean = sub_name.replace('r/', '').replace('R/', '')
+            sub_result = {
+                "subreddit": sub_name_clean,
+                "accessible": False,
+                "subscribers": 0,
+                "posts_found": 0,
+                "posts_in_48h": 0,
+                "keyword_matches": 0,
+                "sample_matches": [],
+                "error": None
+            }
+
+            try:
+                subreddit = reddit.subreddit(sub_name_clean)
+                sub_result["subscribers"] = subreddit.subscribers
+                sub_result["accessible"] = True
+
+                posts_found = 0
+                posts_48h = 0
+                matches = 0
+
+                for post in subreddit.new(limit=limit_posts):
+                    posts_found += 1
+                    post_age_hours = (datetime.utcnow().timestamp() - post.created_utc) / 3600
+
+                    if post_age_hours <= 48:
+                        posts_48h += 1
+                        text = f"{post.title} {post.selftext}".lower()
+
+                        matched_kws = []
+                        for kw in keywords:
+                            kw_lower = kw.lower()
+                            if kw_lower in text:
+                                matched_kws.append(kw)
+
+                        if matched_kws:
+                            matches += 1
+                            if len(sub_result["sample_matches"]) < 3:
+                                sub_result["sample_matches"].append({
+                                    "title": post.title[:80],
+                                    "keywords_matched": matched_kws[:3],
+                                    "age_hours": round(post_age_hours, 1),
+                                    "url": f"https://reddit.com{post.permalink}"
+                                })
+                                sample_matches.append({
+                                    "subreddit": sub_name_clean,
+                                    "title": post.title[:80],
+                                    "keywords": matched_kws[:3]
+                                })
+
+                sub_result["posts_found"] = posts_found
+                sub_result["posts_in_48h"] = posts_48h
+                sub_result["keyword_matches"] = matches
+
+                total_posts_found += posts_found
+                total_posts_48h += posts_48h
+                total_matches += matches
+
+            except Exception as e:
+                sub_result["error"] = str(e)
+
+            results["subreddit_tests"].append(sub_result)
+
+        # Summary
+        results["summary"] = {
+            "subreddits_tested": len(results["subreddit_tests"]),
+            "subreddits_accessible": sum(1 for s in results["subreddit_tests"] if s["accessible"]),
+            "total_posts_scanned": total_posts_found,
+            "posts_within_48h": total_posts_48h,
+            "keyword_matches_found": total_matches,
+            "sample_matches": sample_matches[:5],
+            "diagnosis": ""
+        }
+
+        # Add diagnosis
+        if not any(s["accessible"] for s in results["subreddit_tests"]):
+            results["summary"]["diagnosis"] = "CRITICAL: No subreddits are accessible. Check subreddit names."
+        elif total_posts_48h == 0:
+            results["summary"]["diagnosis"] = "WARNING: No posts found within 48 hours. Subreddits may be low-activity."
+        elif total_matches == 0:
+            results["summary"]["diagnosis"] = "WARNING: Posts found but no keyword matches. Keywords may need adjustment."
+        else:
+            results["summary"]["diagnosis"] = f"OK: Found {total_matches} matching posts. Scan should create opportunities."
+
+        return results
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Debug Reddit scan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
