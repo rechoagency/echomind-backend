@@ -3,6 +3,7 @@ import logging
 from functools import lru_cache
 from supabase import create_client, Client
 from typing import Optional
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,25 @@ def get_supabase_client() -> Client:
                 "Ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set."
             )
         
-        # Create client with error handling
-        logger.info("Creating Supabase client connection...")
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-        logger.info("✅ Supabase client connected successfully")
+        # Create client with error handling and extended timeout
+        # Default httpx timeout is 5s, we extend to 60s for large queries
+        logger.info("Creating Supabase client connection with extended timeout...")
+
+        # Create options with extended timeout (60 seconds instead of default 5)
+        from supabase.lib.client_options import ClientOptions
+        from postgrest import SyncPostgrestClient
+
+        # Configure timeout for postgrest operations
+        timeout = httpx.Timeout(60.0, connect=10.0)
+
+        _supabase_client = create_client(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_ROLE_KEY,
+            options=ClientOptions(
+                postgrest_client_timeout=60,  # 60 second timeout
+            )
+        )
+        logger.info("✅ Supabase client connected successfully (60s timeout)")
         
         return _supabase_client
         

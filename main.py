@@ -216,7 +216,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EchoMind Backend",
     description="Social listening and content generation for Reddit",
-    version="2.3.1",
+    version="2.3.2",
     lifespan=lifespan
 )
 
