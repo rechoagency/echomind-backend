@@ -3152,3 +3152,175 @@ async def debug_reddit_scan(client_id: str, limit_subreddits: int = 3, limit_pos
     except Exception as e:
         logger.error(f"Debug Reddit scan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync-reddit-scan/{client_id}")
+async def sync_reddit_scan(client_id: str, limit_subreddits: int = 5, limit_posts: int = 50):
+    """
+    Synchronous Reddit scan that actually saves opportunities and returns detailed results.
+    Unlike debug-reddit-scan which only tests, this endpoint creates real opportunities.
+
+    Parameters:
+    - client_id: The client ID to scan for
+    - limit_subreddits: Max subreddits to scan (default 5)
+    - limit_posts: Max posts per subreddit (default 50)
+    """
+    import praw
+    import uuid
+    import json as jsonlib
+    from datetime import datetime
+
+    try:
+        supabase = get_supabase()
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Supabase client not available")
+
+        # Get client config
+        client = supabase.table("clients").select("*").eq("client_id", client_id).execute()
+        if not client.data:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        client_data = client.data[0]
+        company_name = client_data.get("company_name")
+        subreddits = client_data.get("target_subreddits", [])
+        keywords = client_data.get("target_keywords", [])
+
+        if not subreddits or not keywords:
+            raise HTTPException(status_code=400, detail="Client has no subreddits or keywords configured")
+
+        # Get existing thread URLs to avoid duplicates
+        existing_result = supabase.table("opportunities")\
+            .select("thread_url")\
+            .eq("client_id", client_id)\
+            .execute()
+        existing_urls = set(opp["thread_url"] for opp in existing_result.data) if existing_result.data else set()
+
+        result = {
+            "client_id": client_id,
+            "company_name": company_name,
+            "existing_opportunities": len(existing_urls),
+            "subreddits_scanned": 0,
+            "posts_scanned": 0,
+            "matches_found": 0,
+            "duplicates_skipped": 0,
+            "opportunities_created": 0,
+            "save_errors": [],
+            "scan_errors": [],
+            "sample_created": []
+        }
+
+        # Initialize Reddit
+        import os
+        reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
+        reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET")
+
+        if not reddit_client_id or not reddit_client_secret:
+            raise HTTPException(status_code=500, detail="Reddit credentials not configured")
+
+        reddit = praw.Reddit(
+            client_id=reddit_client_id,
+            client_secret=reddit_client_secret,
+            user_agent=os.getenv("REDDIT_USER_AGENT", "EchoMind/1.0")
+        )
+
+        opportunities_to_save = []
+
+        for sub_name in subreddits[:limit_subreddits]:
+            sub_name = sub_name.replace('r/', '')
+            result["subreddits_scanned"] += 1
+
+            try:
+                subreddit = reddit.subreddit(sub_name)
+                subscribers = subreddit.subscribers
+
+                for post in subreddit.new(limit=limit_posts):
+                    result["posts_scanned"] += 1
+                    post_age_hours = (datetime.utcnow().timestamp() - post.created_utc) / 3600
+
+                    if post_age_hours > 48:
+                        continue
+
+                    thread_url = f"https://reddit.com{post.permalink}"
+
+                    if thread_url in existing_urls:
+                        result["duplicates_skipped"] += 1
+                        continue
+
+                    # Check keyword matches
+                    text = f"{post.title} {post.selftext}"
+                    matched_keywords = [kw for kw in keywords if kw.lower() in text.lower()]
+
+                    if matched_keywords:
+                        result["matches_found"] += 1
+
+                        # Build opportunity
+                        opportunity = {
+                            "opportunity_id": str(uuid.uuid4()),
+                            "client_id": client_id,
+                            "thread_id": post.id,
+                            "reddit_post_id": post.id,
+                            "subreddit": sub_name,
+                            "subreddit_members": subscribers,
+                            "author_username": str(post.author) if post.author else "[deleted]",
+                            "thread_title": post.title,
+                            "thread_url": thread_url,
+                            "original_post_text": post.selftext[:1000] if post.selftext else "",
+                            "date_posted": datetime.fromtimestamp(post.created_utc).isoformat(),
+                            "matched_keywords": jsonlib.dumps(matched_keywords),
+                            "engagement_score": min(100, (post.score + post.num_comments) // 5),
+                            "relevance_score": 50,
+                            "timing_score": 85 if post_age_hours < 6 else 70 if post_age_hours < 24 else 50,
+                            "commercial_intent_score": 50,
+                            "overall_priority": 0,
+                            "urgency_level": "MEDIUM",
+                            "content_type": "REPLY",
+                            "status": "pending",
+                            "date_found": datetime.utcnow().isoformat()
+                        }
+
+                        opportunities_to_save.append(opportunity)
+                        existing_urls.add(thread_url)  # Prevent duplicates within same scan
+
+            except Exception as e:
+                result["scan_errors"].append({"subreddit": sub_name, "error": str(e)})
+
+        # Save opportunities
+        if opportunities_to_save:
+            for opp in opportunities_to_save:
+                try:
+                    supabase.table("opportunities").insert(opp).execute()
+                    result["opportunities_created"] += 1
+                    if len(result["sample_created"]) < 5:
+                        result["sample_created"].append({
+                            "title": opp["thread_title"][:60],
+                            "subreddit": opp["subreddit"],
+                            "keywords": opp["matched_keywords"]
+                        })
+                except Exception as e:
+                    result["save_errors"].append({
+                        "title": opp["thread_title"][:40],
+                        "error": str(e)
+                    })
+
+        # Summary
+        if result["opportunities_created"] > 0:
+            result["status"] = "success"
+            result["message"] = f"Created {result['opportunities_created']} opportunities"
+        elif result["matches_found"] > 0 and result["save_errors"]:
+            result["status"] = "partial_failure"
+            result["message"] = f"Found {result['matches_found']} matches but failed to save"
+        elif result["duplicates_skipped"] > 0:
+            result["status"] = "all_duplicates"
+            result["message"] = f"All {result['duplicates_skipped']} matching posts already exist"
+        else:
+            result["status"] = "no_matches"
+            result["message"] = "No keyword matches found in recent posts"
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Sync Reddit scan failed: {e}")
+        import traceback
+        raise HTTPException(status_code=500, detail=f"{str(e)}\n{traceback.format_exc()}")
