@@ -868,21 +868,26 @@ class OpportunityScoringWorker:
 # Utility functions
 def score_opportunities_batched(
     client_id: str,
-    batch_size: int = 100,
-    max_batches: int = 10,
+    batch_size: int = 10,
+    max_batches: int = 50,
     force_rescore: bool = False
 ) -> Dict:
     """
-    Score opportunities in batches to avoid database timeouts.
+    Score opportunities in micro-batches to avoid Supabase statement timeouts.
 
-    This function uses a two-stage approach to prevent timeouts:
-    1. First fetch only opportunity_ids (fast, minimal data)
-    2. Then fetch full records one-by-one and score them
+    Uses a micro-batch approach with very small batch sizes to work around
+    Supabase's server-side statement_timeout (typically 8-30 seconds).
+
+    Strategy:
+    1. Use small batch sizes (10 records) with simple queries
+    2. No complex filtering in initial query - just client_id and limit
+    3. Filter for unscored in-memory after fetching
+    4. Process and update each record individually
 
     Args:
         client_id: The client ID to score opportunities for
-        batch_size: Number of opportunities per batch (default 100)
-        max_batches: Maximum number of batches to process (default 10)
+        batch_size: Number of opportunities per batch (default 10 - small to avoid timeout)
+        max_batches: Maximum number of batches to process (default 50)
         force_rescore: If True, rescore all opportunities; if False, only unscored
 
     Returns:
@@ -894,67 +899,52 @@ def score_opportunities_batched(
     total_processed = 0
     total_excluded = 0
     total_errors = 0
+    total_skipped = 0  # Already scored, skipped
     batches_run = 0
     last_error = None
+    last_opp_id = None  # For cursor-based pagination
 
     # Get brand config once for this client
     brand_config = worker.get_brand_config(client_id)
     if brand_config:
         logger.info(f"Loaded brand config for {brand_config.get('company_name')}")
 
-    logger.info(f"Starting batched scoring for client {client_id} (batch_size={batch_size}, max_batches={max_batches})")
+    logger.info(f"Starting micro-batch scoring for client {client_id} (batch_size={batch_size}, max_batches={max_batches})")
 
     while batches_run < max_batches:
         try:
-            # STAGE 1: Fetch only IDs (fast query, minimal data transfer)
-            # This avoids the statement timeout when selecting all columns
-            if force_rescore:
-                # Get all opportunity IDs
-                id_query = supabase.table("opportunities")\
-                    .select("opportunity_id")\
-                    .eq("client_id", client_id)\
-                    .order("created_at", desc=True)\
-                    .range(batches_run * batch_size, (batches_run + 1) * batch_size - 1)
-            else:
-                # Only get unscored opportunity IDs
-                id_query = supabase.table("opportunities")\
-                    .select("opportunity_id")\
-                    .eq("client_id", client_id)\
-                    .is_("composite_score", "null")\
-                    .order("created_at", desc=True)\
-                    .limit(batch_size)
+            # Simple query: just fetch a small batch by client_id
+            # Use cursor-based pagination to avoid offset which is slow on large tables
+            query = supabase.table("opportunities")\
+                .select("opportunity_id, composite_score, thread_title, original_post_text, thread_content, thread_body, subreddit, thread_created_utc, thread_created_at, date_posted, comment_count, num_comments, thread_num_comments, score, upvotes, thread_score, is_locked, removed")\
+                .eq("client_id", client_id)\
+                .order("opportunity_id")\
+                .limit(batch_size)
 
-            id_result = id_query.execute()
+            # Use cursor pagination if we have a last_opp_id
+            if last_opp_id:
+                query = query.gt("opportunity_id", last_opp_id)
 
-            if not id_result.data:
-                logger.info(f"No more opportunities to score after {batches_run} batches")
-                break
+            result = query.execute()
 
-            opp_ids = [r.get("opportunity_id") for r in id_result.data if r.get("opportunity_id")]
-            logger.info(f"Batch {batches_run + 1}: Found {len(opp_ids)} opportunity IDs to process")
-
-            if not opp_ids:
+            if not result.data:
+                logger.info(f"No more opportunities to process after {batches_run} batches")
                 break
 
             batch_processed = 0
             batch_excluded = 0
             batch_errors = 0
+            batch_skipped = 0
 
-            # STAGE 2: Fetch and score each opportunity individually
-            for opp_id in opp_ids:
+            for opp in result.data:
+                opp_id = opp.get("opportunity_id")
+                last_opp_id = opp_id  # Track for cursor pagination
+
                 try:
-                    # Fetch full record for this single opportunity
-                    opp_result = supabase.table("opportunities")\
-                        .select("*")\
-                        .eq("opportunity_id", opp_id)\
-                        .limit(1)\
-                        .execute()
-
-                    if not opp_result.data:
-                        batch_errors += 1
+                    # Skip if already scored (unless force_rescore)
+                    if not force_rescore and opp.get("composite_score") is not None:
+                        batch_skipped += 1
                         continue
-
-                    opp = opp_result.data[0]
 
                     # Calculate all scores
                     scores = worker.score_opportunity(opp, brand_config)
@@ -1007,58 +997,51 @@ def score_opportunities_batched(
             total_processed += batch_processed
             total_excluded += batch_excluded
             total_errors += batch_errors
+            total_skipped += batch_skipped
             batches_run += 1
 
-            logger.info(f"Batch {batches_run} complete: {batch_processed} processed, {batch_excluded} excluded, {batch_errors} errors")
+            logger.info(f"Batch {batches_run}: {batch_processed} processed, {batch_excluded} excluded, {batch_skipped} skipped, {batch_errors} errors")
 
-            # If we got fewer than batch_size IDs, we're done
-            if len(opp_ids) < batch_size:
+            # If we got fewer than batch_size records, we're done
+            if len(result.data) < batch_size:
+                logger.info("Reached end of opportunities")
                 break
 
         except Exception as e:
-            logger.error(f"Error in batch {batches_run + 1}: {e}")
+            error_str = str(e)
+            logger.error(f"Error in batch {batches_run + 1}: {error_str}")
             total_errors += 1
             if last_error is None:
-                last_error = str(e)
+                last_error = error_str
+
+            # If it's a statement timeout, we might be able to continue with smaller batches
+            if "57014" in error_str or "statement timeout" in error_str.lower():
+                logger.warning("Statement timeout detected - continuing with next batch")
+                batches_run += 1
+                continue
             break
 
-    # Check if more opportunities remain
-    more_remaining = False
-    try:
-        if force_rescore:
-            remaining = supabase.table("opportunities")\
-                .select("opportunity_id", count="exact")\
-                .eq("client_id", client_id)\
-                .execute()
-            total_for_client = remaining.count or 0
-            more_remaining = total_for_client > (total_processed + total_excluded)
-        else:
-            remaining = supabase.table("opportunities")\
-                .select("opportunity_id", count="exact")\
-                .eq("client_id", client_id)\
-                .is_("composite_score", "null")\
-                .execute()
-            more_remaining = (remaining.count or 0) > 0
-    except Exception:
-        pass
+    # Estimate if more opportunities remain
+    more_remaining = batches_run >= max_batches
 
     result = {
-        "success": True,
+        "success": total_errors == 0 or total_processed > 0,
         "client_id": client_id,
         "batches_run": batches_run,
         "batch_size": batch_size,
         "total_processed": total_processed,
         "total_excluded": total_excluded,
+        "total_skipped": total_skipped,
         "total_errors": total_errors,
         "more_remaining": more_remaining,
-        "scoring_version": "v3.1_two_stage_batched",
+        "scoring_version": "v3.2_micro_batch",
         "message": f"Processed {total_processed} opportunities in {batches_run} batches"
     }
 
     if last_error:
         result["sample_error"] = last_error
 
-    logger.info(f"Batched scoring complete: {result}")
+    logger.info(f"Micro-batch scoring complete: {result}")
     return result
 
 

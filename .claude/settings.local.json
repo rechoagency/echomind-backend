@@ -24,7 +24,12 @@
       "Bash(python3:*)",
       "Bash(if [ -f /c/echomind/echomind-backend/.env ])",
       "Bash(then source /c/echomind/echomind-backend/.env)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(xxd:*)",
+      "Bash(timeout:*)",
+      "Bash(for i in 1 2 3 4 5)",
+      "Bash(do echo \"Scoring batch $i for Mira...\")",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

@@ -216,7 +216,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EchoMind Backend",
     description="Social listening and content generation for Reddit",
-    version="2.3.3",
+    version="2.3.4",
     lifespan=lifespan
 )
 
@@ -267,7 +267,7 @@ async def health_check():
         return {
             "status": "healthy" if db_status == "connected" and is_valid else "degraded",
             "database": db_status,
-            "version": "2.3.3",
+            "version": "2.3.4",
             "environment": {
                 "valid": is_valid,
                 "missing_critical": len(env_results["missing"]),
@@ -287,7 +287,7 @@ async def health_check():
         return {
             "status": "error",
             "error": str(e),
-            "version": "2.3.3"
+            "version": "2.3.4"
         }
 
 # ========================================
@@ -421,7 +421,7 @@ logger.info("✅ All routers loaded")
 async def root():
     return {
         "message": "EchoMind Backend API",
-        "version": "2.3.3",
+        "version": "2.3.4",
         "status": "running",
         "docs": "/docs",
         "health": "/health",
