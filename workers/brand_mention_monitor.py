@@ -6,11 +6,15 @@ Scans Reddit and creates opportunities directly (not brand_mentions)
 import os
 import re
 import praw
+import logging
 from openai import OpenAI
 from datetime import datetime, timedelta
 from supabase_client import get_supabase_client
 import json
 import uuid
+
+# Set up logger for Railway logs
+logger = logging.getLogger(__name__)
 
 # Initialize clients
 supabase = get_supabase_client()
@@ -174,7 +178,7 @@ def scan_for_opportunities(client_id, company_name, subreddits, keywords):
                     print(f"    Found opportunity in r/{subreddit_name}: {post.title[:50]}...")
 
         except Exception as e:
-            print(f"    Error scanning r/{subreddit_name}: {e}")
+            logger.warning(f"Failed to scan subreddit {subreddit_name}: {str(e)}")
             continue
 
     return opportunities_found
