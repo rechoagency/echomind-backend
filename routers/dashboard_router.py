@@ -40,8 +40,9 @@ async def get_client_dashboard(client_id: str) -> Dict[str, Any]:
         deployed = len([c for c in content_pieces if c.get("status") == "delivered"])
         
         # Get recent activity (last 7 days)
+        # Use date_found (from opportunities table) or discovered_at (from view) as fallback
         seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
-        recent_opps = [o for o in opportunities if o.get("discovered_at", "") >= seven_days_ago]
+        recent_opps = [o for o in opportunities if (o.get("date_found") or o.get("discovered_at") or "") >= seven_days_ago]
         
         return {
             "client_id": client_id,
