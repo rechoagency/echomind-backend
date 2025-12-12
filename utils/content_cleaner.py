@@ -62,6 +62,12 @@ PHRASE_REPLACEMENTS = {
     "That's a good question": "",
     "don't hesitate to": "feel free to",
     "Don't hesitate to": "Feel free to",
+
+    # AI-style personal experience openers (overused)
+    "In my experience, ": "",
+    "in my experience, ": "",
+    "In my experience,": "",
+    "in my experience,": "",
 }
 
 # Contractions - must use these (case-sensitive replacements)
@@ -100,6 +106,14 @@ CONTRACTION_REPLACEMENTS = {
     "We are ": "We're ",
     "I am ": "I'm ",
     "i am ": "I'm ",
+    "I have ": "I've ",
+    "i have ": "I've ",
+    "you will ": "you'll ",
+    "You will ": "You'll ",
+    "we have ": "we've ",
+    "We have ": "We've ",
+    "they have ": "they've ",
+    "They have ": "They've ",
 }
 
 # Formal words to replace
@@ -183,7 +197,7 @@ def validate_content(content: str) -> dict:
     # Check for remaining banned phrases
     banned_check = [
         "seems like", "solid choice", "generally,", "it is important",
-        "great question", "good question", "don't hesitate"
+        "great question", "good question", "don't hesitate", "in my experience"
     ]
     for phrase in banned_check:
         if phrase in content_lower:
@@ -192,7 +206,8 @@ def validate_content(content: str) -> dict:
     # Check for uncontracted forms (common ones only)
     uncontracted_check = [
         ("it is ", "it's"), ("you are ", "you're"), ("do not ", "don't"),
-        ("cannot ", "can't"), ("will not ", "won't")
+        ("cannot ", "can't"), ("will not ", "won't"), ("i have ", "I've"),
+        ("you will ", "you'll"), ("we have ", "we've"), ("they have ", "they've")
     ]
     for formal, contracted in uncontracted_check:
         if formal in content_lower:
