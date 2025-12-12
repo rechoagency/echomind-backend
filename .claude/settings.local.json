@@ -29,7 +29,10 @@
       "Bash(timeout:*)",
       "Bash(for i in 1 2 3 4 5)",
       "Bash(do echo \"Scoring batch $i for Mira...\")",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(for:*)",
+      "Bash(do echo \"Batch $i...\")",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []
